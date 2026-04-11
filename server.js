@@ -1,6 +1,3 @@
-// ═══════════════════════════════════════════════════════════════
-// VP Honda Dealership — Backend Server
-// ═══════════════════════════════════════════════════════════════
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -12,13 +9,28 @@ const PORT = process.env.PORT || 5000;
 // ── Middleware ────────────────────────────────────────────────
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// CORS — Allow all Vercel & localhost origins
 app.use(cors({
-  origin: [
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'http://localhost:3000',
-    process.env.FRONTEND_URL
-  ].filter(Boolean),
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, etc)
+    if (!origin) return callback(null, true);
+    // Allow localhost, vercel, render domains
+    if (
+      origin.includes('localhost') ||
+      origin.includes('vercel.app') ||
+      origin.includes('onrender.com') ||
+      origin.includes('vphonda') ||
+      origin.includes('vp-honda')
+    ) {
+      return callback(null, true);
+    }
+    // Also allow if FRONTEND_URL matches
+    if (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL) {
+      return callback(null, true);
+    }
+    callback(null, true); // Allow all for now
+  },
   credentials: true
 }));
 
@@ -35,6 +47,8 @@ app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/reminders', require('./routes/reminders'));
 app.use('/api/serviceCustomers', require('./routes/serviceCustomers'));
 app.use('/api/dashboard', require('./routes/dashboard'));
+app.use('/api/staff', require('./routes/staff'));
+app.use('/api/oldbikes', require('./routes/oldbikes'));
 app.use('/api', require('./routes/pdf'));
 app.use('/api', require('./routes/dataImport'));
 
@@ -58,5 +72,4 @@ app.use((err, req, res, next) => {
 // ── Start ────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`🚀 VP Honda API running on port ${PORT}`);
-  console.log(`📍 http://localhost:${PORT}`);
 });
