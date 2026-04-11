@@ -49,6 +49,7 @@ app.use('/api/serviceCustomers', require('./routes/serviceCustomers'));
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/staff', require('./routes/staff'));
 app.use('/api/oldbikes', require('./routes/oldbikes'));
+app.use('/api/quotations', require('./routes/quotations'));
 app.use('/api', require('./routes/pdf'));
 app.use('/api', require('./routes/dataImport'));
 
