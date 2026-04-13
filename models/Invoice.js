@@ -1,25 +1,34 @@
 const mongoose = require('mongoose');
 
 const invoiceSchema = new mongoose.Schema({
-  invoiceNumber: { type: String, default: '' },
-  invoiceDate: { type: String, default: '' },
-  invoiceType: { type: String, default: 'vehicle' },
+  invoiceNumber: { type: String },
   customerName: { type: String, default: '' },
-  customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
-  phone: { type: String, default: '' },
+  customerPhone: { type: String, default: '' },
+  customerId: { type: String, default: '' },  // String, NOT ObjectId
   vehicle: { type: String, default: '' },
-  items: [{ name: String, qty: Number, rate: Number, amount: Number, gst: Number }],
+  regNo: { type: String, default: '' },
+  frameNo: { type: String, default: '' },
+  engineNo: { type: String, default: '' },
+  invoiceDate: { type: String, default: '' },
+  paymentMode: { type: String, default: 'CASH' },
+  serviceKm: { type: String, default: '' },
+  serviceType: { type: String, default: '' },
+  serviceNumber: { type: String, default: '' },
+  items: [{ 
+    srNo: Number, partNo: String, hsn: String, description: String,
+    mrp: Number, unitPrice: Number, quantity: Number,
+    total: Number, gstRate: Number, gstAmount: Number,
+  }],
   totals: {
     subtotal: { type: Number, default: 0 },
-    sgst: { type: Number, default: 0 },
-    cgst: { type: Number, default: 0 },
-    totalGst: { type: Number, default: 0 },
+    gstRate: { type: Number, default: 18 },
+    gstAmount: { type: Number, default: 0 },
     totalAmount: { type: Number, default: 0 },
   },
-  amount: { type: Number, default: 0 },
-  pdfText: { type: String, default: '' },
-  importedAt: { type: Date, default: Date.now },
-  notes: { type: String, default: '' },
+  importedFrom: { type: String, default: '' },
+  importedAt: { type: String, default: '' },
+  status: { type: String, default: 'Active' },
+  source: { type: String, default: '' },
 }, { timestamps: true, strict: false });
 
 module.exports = mongoose.model('Invoice', invoiceSchema);
