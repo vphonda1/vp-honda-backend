@@ -2,7 +2,7 @@ const router = require('express').Router();
 const Customer = require('../models/Customer');
 
 // GET all customers
-router.get('/', async (req, res) => {
+router.get('/sync',  (req, res) => {
   try {
     const customers = await Customer.find().sort({ createdAt: -1 });
     res.json(customers);
