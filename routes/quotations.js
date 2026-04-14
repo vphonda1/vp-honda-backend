@@ -24,7 +24,7 @@ const quotationSchema = new mongoose.Schema({
   updatedAt: String,
 }, { timestamps: true, strict: false });
 
-const Quotation = mongoose.model('Quotation', quotationSchema);
+const Quotation = mongoose.models.Quotation || mongoose.model('Quotation', quotationSchema);
 
 // GET all
 router.get('/', async (req, res) => {

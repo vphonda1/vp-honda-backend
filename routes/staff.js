@@ -23,7 +23,7 @@ try {
     pin: { type: String, default: '1234' },
     active: { type: Boolean, default: true },
   }, { timestamps: true, strict: false });
-  Staff = mongoose.model('Staff', staffSchema);
+  Staff = mongoose.models.Staff || mongoose.model('Staff', staffSchema);
 } catch(e) { console.error('Staff model error:', e.message); }
 
 // GET all staff (for login page — returns name, id, position, pin)
