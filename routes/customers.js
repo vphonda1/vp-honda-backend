@@ -2,7 +2,7 @@ const router = require('express').Router();
 const Customer = require('../models/Customer');
 
 // GET all customers
-router.get('/sync',  (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const customers = await Customer.find().sort({ createdAt: -1 });
     res.json(customers);
@@ -33,7 +33,7 @@ router.post('/', async (req, res) => {
       }
     }
     
-    const customer = await Customer.create(req.body);
+    const customer = Customer.create(req.body);
     res.status(201).json(customer);
   } catch (err) {
     res.status(400).json({ error: err.message });
