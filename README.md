@@ -19,3 +19,4 @@ npm run dev
 1. Frontend folder GitHub पर push करो
 2. vercel.com → Import → repo select
 3. Environment Variable: `VITE_API_URL` = Render backend URL
+ 
