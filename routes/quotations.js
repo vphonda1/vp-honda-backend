@@ -26,19 +26,16 @@ const quotationSchema = new mongoose.Schema({
 
 const Quotation = mongoose.models.Quotation || mongoose.model('Quotation', quotationSchema);
 
-// GET all
 router.get('/', async (req, res) => {
   try { res.json(await Quotation.find().sort({ createdAt: -1 })); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST new
 router.post('/', async (req, res) => {
   try { res.status(201).json(await Quotation.create(req.body)); }
   catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-// PUT update
 router.put('/:id', async (req, res) => {
   try {
     const q = await Quotation.findOneAndUpdate(
@@ -49,7 +46,6 @@ router.put('/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE
 router.delete('/:id', async (req, res) => {
   try {
     await Quotation.findOneAndDelete(
@@ -59,7 +55,6 @@ router.delete('/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST sync (bulk)
 router.post('/sync', async (req, res) => {
   try {
     const list = req.body.quotations || req.body;

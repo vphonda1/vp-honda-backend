@@ -1,10 +1,8 @@
 const router = require('express').Router();
+const mongoose = require('mongoose');
 
-// In-memory store backed by a JSON file approach
-// For simplicity, we'll use a lightweight MongoDB model
 let Staff;
 try {
-  const mongoose = require('mongoose');
   const staffSchema = new mongoose.Schema({
     staffId: { type: Number },
     name: { type: String, default: '' },
@@ -26,7 +24,6 @@ try {
   Staff = mongoose.models.Staff || mongoose.model('Staff', staffSchema);
 } catch(e) { console.error('Staff model error:', e.message); }
 
-// GET all staff (for login page — returns name, id, position, pin)
 router.get('/', async (req, res) => {
   try {
     if (!Staff) return res.json([]);
@@ -51,14 +48,12 @@ router.get('/', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST — Sync all staff (bulk replace)
 router.post('/sync', async (req, res) => {
   try {
     if (!Staff) return res.status(500).json({ error: 'DB not available' });
     const staffList = req.body.staffList || req.body;
     if (!Array.isArray(staffList)) return res.status(400).json({ error: 'staffList array required' });
 
-    // Clear existing and insert all
     await Staff.deleteMany({});
     const docs = staffList.map(s => ({
       staffId: s.id,
@@ -83,7 +78,6 @@ router.post('/sync', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PUT — Update PIN (staff self-service)
 router.put('/change-pin', async (req, res) => {
   try {
     if (!Staff) return res.status(500).json({ error: 'DB not available' });
@@ -97,7 +91,6 @@ router.put('/change-pin', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PUT — Admin reset PIN
 router.put('/reset-pin', async (req, res) => {
   try {
     if (!Staff) return res.status(500).json({ error: 'DB not available' });
