@@ -8,7 +8,6 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
   try {
-    // Try by _id first, then by invoiceNumber
     let inv = null;
     if (req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
       inv = await Invoice.findById(req.params.id);
@@ -34,6 +33,19 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try { await Invoice.findByIdAndDelete(req.params.id); res.json({ success: true }); }
   catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Bulk sync (for cross-device sync) ─────────────────────────
+router.post('/sync', async (req, res) => {
+  try {
+    const list = req.body.invoices || req.body;
+    if (!Array.isArray(list)) return res.status(400).json({ error: 'Array required' });
+    await Invoice.deleteMany({});
+    if (list.length > 0) await Invoice.insertMany(list);
+    res.json({ success: true, count: list.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

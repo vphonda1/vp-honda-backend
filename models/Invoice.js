@@ -4,9 +4,9 @@ const invoiceSchema = new mongoose.Schema({
   invoiceNumber: { type: String },
   customerName: { type: String, default: '' },
   customerPhone: { type: String, default: '' },
-  customerId: { type: String, default: '' },  // String, NOT ObjectId
+  customerId: { type: String, default: '' },
   vehicle: { type: String, default: '' },
-  regNo: { type: String, default: '' },
+  regNo: { type: String, default: '', index: true },
   frameNo: { type: String, default: '' },
   engineNo: { type: String, default: '' },
   invoiceDate: { type: String, default: '' },
