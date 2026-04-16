@@ -40,14 +40,14 @@ mongoose.connect(MONGO_URI)
 // ── Routes ───────────────────────────────────────────────────
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/parts', require('./routes/parts'));
-app.use('/api/invoices', require('./routes/invoices'));
+app.use('/api/invoices', require('./routes/invoices'));  // ✅ यह अब PDF parsing भी करता है
 app.use('/api/reminders', require('./routes/reminders'));
 app.use('/api/serviceCustomers', require('./routes/serviceCustomers'));
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/staff', require('./routes/staff'));
 app.use('/api/oldbikes', require('./routes/oldbikes'));
 app.use('/api/quotations', require('./routes/quotations'));
-app.use('/api', require('./routes/pdf'));
+// ❌ REMOVED: app.use('/api', require('./routes/pdf')); -- यह अब नहीं चाहिए
 app.use('/api', require('./routes/dataImport'));
 
 // ── Health Check ─────────────────────────────────────────────
