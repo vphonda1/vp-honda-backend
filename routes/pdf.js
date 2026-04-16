@@ -38,9 +38,6 @@ router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
     }
 
     console.log(`✅ OCR extracted ${cleanText.length} chars`);
-    // यहाँ raw text भी log करें (debugging के लिए)
-    console.log('First 500 chars:', cleanText.slice(0,500));
-    
     res.json({ text: cleanText, length: cleanText.length });
     
   } catch (err) {
