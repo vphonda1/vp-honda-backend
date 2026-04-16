@@ -35,7 +35,7 @@ router.delete('/:id', async (req, res) => {
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Bulk sync (for cross-device sync) ─────────────────────────
+// ✅ Bulk sync (clear all + insert new) – used by Clear All
 router.post('/sync', async (req, res) => {
   try {
     const list = req.body.invoices || req.body;

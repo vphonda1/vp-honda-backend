@@ -13,9 +13,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // CORS — Allow all Vercel & localhost origins
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, etc)
     if (!origin) return callback(null, true);
-    // Allow localhost, vercel, render domains
     if (
       origin.includes('localhost') ||
       origin.includes('vercel.app') ||
@@ -25,11 +23,10 @@ app.use(cors({
     ) {
       return callback(null, true);
     }
-    // Also allow if FRONTEND_URL matches
     if (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL) {
       return callback(null, true);
     }
-    callback(null, true); // Allow all for now
+    callback(null, true);
   },
   credentials: true
 }));
