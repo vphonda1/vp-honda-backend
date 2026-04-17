@@ -1,51 +1,78 @@
 const router = require('express').Router();
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
+const path = require('path');
 const Invoice = require('../models/Invoice');
 
-// PDF TEXT EXTRACTION — pdfjs-dist Node.js + pdf-parse fallback
+// ════════════════════════════════════════════════════════════
+// PDF TEXT EXTRACTION
+// Uses pdfjs-dist with local CMap files — handles Excel PDFs
+// REQUIREMENT: npm install pdfjs-dist  (in backend project)
+// ════════════════════════════════════════════════════════════
 const extractTextFromPDF = async (pdfBuffer) => {
-  // Method 1: pdfjs-dist (best for Excel PDFs, no worker in Node.js)
   try {
+    // Dynamic import of pdfjs-dist (ESM in CommonJS Node.js)
     const pdfjs = await import('pdfjs-dist');
+
+    // Local CMap + standard font paths from pdfjs-dist package
+    // These are critical for Excel PDF font encoding (CIDFonts)
+    const pdfjsDir = path.dirname(require.resolve('pdfjs-dist/package.json'));
+    const cMapUrl          = path.join(pdfjsDir, 'cmaps')          + path.sep;
+    const standardFontDataUrl = path.join(pdfjsDir, 'standard_fonts') + path.sep;
+
     const uint8 = new Uint8Array(pdfBuffer);
-    const pdf = await pdfjs.getDocument({ data: uint8, useSystemFonts: true, verbosity: 0 }).promise;
+    const pdf = await pdfjs.getDocument({
+      data: uint8,
+      cMapUrl,
+      cMapPacked: true,
+      standardFontDataUrl,
+      useSystemFonts: false,
+      verbosity: 0,
+    }).promise;
+
     let text = '';
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p);
-      const tc = await page.getTextContent();
+      const tc   = await page.getTextContent();
       text += tc.items.map(i => i.str).join(' ') + '\n';
     }
+
     if (text.trim().length > 20) {
-      console.log(`✅ pdfjs-dist: ${text.length} chars`);
+      console.log(`✅ pdfjs-dist: ${text.length} chars extracted`);
       return text;
     }
-    throw new Error('empty text');
-  } catch (e1) {
-    console.warn('⚠️ pdfjs-dist failed:', e1.message);
-  }
+    throw new Error('pdfjs returned empty text');
 
-  // Method 2: pdf-parse fallback
-  try {
-    const PDFParser = require('pdf-parse');
-    const data = await PDFParser(pdfBuffer);
-    if (data.text && data.text.trim().length > 20) {
-      console.log(`✅ pdf-parse: ${data.text.length} chars`);
-      return data.text;
+  } catch (e1) {
+    console.warn('⚠️ pdfjs-dist failed:', e1.message, '— trying pdf-parse...');
+
+    // Fallback: pdf-parse (works for simple PDFs)
+    try {
+      const PDFParser = require('pdf-parse');
+      const data = await PDFParser(pdfBuffer);
+      if (data.text && data.text.trim().length > 20) {
+        console.log(`✅ pdf-parse: ${data.text.length} chars extracted`);
+        return data.text;
+      }
+      throw new Error('pdf-parse returned empty text');
+    } catch (e2) {
+      console.error('❌ Both extractors failed:', e2.message);
+      throw new Error('PDF se text extract nahi hua: ' + e2.message);
     }
-    throw new Error('empty text');
-  } catch (e2) {
-    throw new Error('PDF text extract failed: ' + e2.message);
   }
 };
 
+// ════════════════════════════════════════════════════════════
 // GET /api/invoices
+// ════════════════════════════════════════════════════════════
 router.get('/', async (req, res) => {
   try { res.json(await Invoice.find().sort({ createdAt: -1 })); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ════════════════════════════════════════════════════════════
 // GET /api/invoices/:id
+// ════════════════════════════════════════════════════════════
 router.get('/:id', async (req, res) => {
   try {
     let inv = null;
@@ -56,7 +83,9 @@ router.get('/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/invoices — upsert (no duplicate key errors)
+// ════════════════════════════════════════════════════════════
+// POST /api/invoices — upsert by invoiceNumber
+// ════════════════════════════════════════════════════════════
 router.post('/', async (req, res) => {
   try {
     const body = req.body;
@@ -75,7 +104,9 @@ router.post('/', async (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
+// ════════════════════════════════════════════════════════════
 // PUT /api/invoices/:id
+// ════════════════════════════════════════════════════════════
 router.put('/:id', async (req, res) => {
   try {
     let inv = null;
@@ -88,7 +119,9 @@ router.put('/:id', async (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
+// ════════════════════════════════════════════════════════════
 // DELETE /api/invoices/:id
+// ════════════════════════════════════════════════════════════
 router.delete('/:id', async (req, res) => {
   try {
     let inv = null;
@@ -99,20 +132,24 @@ router.delete('/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ════════════════════════════════════════════════════════════
 // POST /api/invoices/clear — type: 'vehicle' | 'service' | 'all'
+// ════════════════════════════════════════════════════════════
 router.post('/clear', async (req, res) => {
   try {
     const { type } = req.body;
     let result;
-    if (type === 'vehicle') result = await Invoice.deleteMany({ invoiceType: 'vehicle' });
+    if (type === 'vehicle')      result = await Invoice.deleteMany({ invoiceType: 'vehicle' });
     else if (type === 'service') result = await Invoice.deleteMany({ invoiceType: 'service' });
-    else result = await Invoice.deleteMany({});
-    console.log(`🗑️ Cleared ${result.deletedCount} (type:${type})`);
+    else                         result = await Invoice.deleteMany({});
+    console.log(`🗑️ Cleared ${result.deletedCount} invoices (type: ${type})`);
     res.json({ success: true, deleted: result.deletedCount });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ════════════════════════════════════════════════════════════
 // POST /api/invoices/sync
+// ════════════════════════════════════════════════════════════
 router.post('/sync', async (req, res) => {
   try {
     const list = req.body.invoices || req.body;
@@ -123,15 +160,24 @@ router.post('/sync', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/invoices/parse-pdf — return full raw text to frontend
+// ════════════════════════════════════════════════════════════
+// POST /api/invoices/parse-pdf
+// Returns full raw text → frontend parseVPHondaInvoice() parses it
+// ════════════════════════════════════════════════════════════
 router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No PDF uploaded' });
     console.log(`\n📄 ${req.file.originalname} (${req.file.size} bytes)`);
+
     const text = await extractTextFromPDF(req.file.buffer);
-    res.json({ success: true, text, filename: req.file.originalname });
+
+    res.json({
+      success: true,
+      text,                        // full text, not truncated
+      filename: req.file.originalname,
+    });
   } catch (err) {
-    console.error('❌ parse-pdf:', err.message);
+    console.error('❌ parse-pdf error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
