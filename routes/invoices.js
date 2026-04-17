@@ -6,24 +6,31 @@ const Invoice = require('../models/Invoice');
 
 // ════════════════════════════════════════════════════════════
 // PDF TEXT EXTRACTION
-// Uses pdfjs-dist@3.11.174 legacy CommonJS build (no ESM issues)
-// Install: npm install pdfjs-dist@3.11.174
+// pdfjs-dist@3.11.174 with NodeCMapReaderFactory
+// This is REQUIRED for Excel PDF font encoding (Identity-H)
 // ════════════════════════════════════════════════════════════
 const extractTextFromPDF = async (pdfBuffer) => {
-  // ── Method 1: pdfjs-dist v3 legacy (CommonJS, handles Excel PDFs) ──
+
+  // ── Method 1: pdfjs-dist legacy + NodeCMapReaderFactory ──
   try {
     const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
     const pdfjsDir = path.dirname(require.resolve('pdfjs-dist/package.json'));
-    const cMapUrl  = path.join(pdfjsDir, 'cmaps') + path.sep;
-    const stdFonts = path.join(pdfjsDir, 'standard_fonts') + path.sep;
+
+    // NodeCMapReaderFactory reads local cmap files — decodes Excel fonts
+    const { NodeCMapReaderFactory, NodeStandardFontDataFactory } = pdfjsLib;
+
+    const cMapUrl      = path.join(pdfjsDir, 'cmaps')          + '/';
+    const stdFontUrl   = path.join(pdfjsDir, 'standard_fonts') + '/';
 
     const uint8 = new Uint8Array(pdfBuffer);
     const pdf   = await pdfjsLib.getDocument({
-      data: uint8,
-      cMapUrl,
-      cMapPacked: true,
-      standardFontDataUrl: stdFonts,
-      verbosity: 0,
+      data:                    uint8,
+      CMapReaderFactory:       NodeCMapReaderFactory,
+      cMapUrl:                 cMapUrl,
+      cMapPacked:              true,
+      StandardFontDataFactory: NodeStandardFontDataFactory,
+      standardFontDataUrl:     stdFontUrl,
+      verbosity:               0,
     }).promise;
 
     let text = '';
@@ -33,40 +40,110 @@ const extractTextFromPDF = async (pdfBuffer) => {
       text += tc.items.map(i => i.str).join(' ') + '\n';
     }
 
-    if (text.trim().length > 10) {
-      console.log(`✅ pdfjs-dist: ${text.length} chars`);
+    const clean = text.replace(/\s+/g, ' ').trim();
+    if (clean.length > 20) {
+      console.log(`✅ pdfjs NodeCMap: ${clean.length} chars`);
       return text;
     }
-    throw new Error('pdfjs returned empty text');
+    throw new Error('pdfjs returned empty/short text');
 
   } catch (e1) {
-    console.warn('⚠️ pdfjs-dist/legacy failed:', e1.message);
+    console.warn('⚠️ pdfjs/legacy failed:', e1.message);
   }
 
   // ── Method 2: pdf-parse fallback ──
   try {
     const PDFParser = require('pdf-parse');
     const data = await PDFParser(pdfBuffer);
-    if (data.text && data.text.trim().length > 10) {
-      console.log(`✅ pdf-parse: ${data.text.length} chars`);
+    const clean = (data.text || '').replace(/\s+/g, ' ').trim();
+    if (clean.length > 20) {
+      console.log(`✅ pdf-parse: ${clean.length} chars`);
       return data.text;
     }
     throw new Error('pdf-parse returned empty text');
   } catch (e2) {
-    console.error('❌ Both extractors failed:', e2.message);
-    throw new Error('PDF se text extract nahi hua: ' + e2.message);
+    console.warn('⚠️ pdf-parse failed:', e2.message);
+  }
+
+  // ── Method 3: Raw binary extraction (last resort) ──
+  try {
+    const text = extractTextRaw(pdfBuffer);
+    if (text.length > 20) {
+      console.log(`✅ raw extraction: ${text.length} chars`);
+      return text;
+    }
+    throw new Error('raw extraction empty');
+  } catch (e3) {
+    console.error('❌ All methods failed:', e3.message);
+    throw new Error('PDF se text extract nahi hua');
   }
 };
 
-// ════════════════════════════════════════════════════════════
-// GET /api/invoices
-// ════════════════════════════════════════════════════════════
+// Raw binary PDF text extractor (handles compressed streams)
+const extractTextRaw = (pdfBuffer) => {
+  const zlib = require('zlib');
+  let allText = '';
+  let pos = 0;
+
+  while (pos < pdfBuffer.length) {
+    const si = pdfBuffer.indexOf('stream', pos);
+    if (si === -1) break;
+
+    let ds = si + 6;
+    if (pdfBuffer[ds] === 0x0D) ds++;
+    if (pdfBuffer[ds] === 0x0A) ds++;
+
+    const ei = pdfBuffer.indexOf('endstream', ds);
+    if (ei === -1) break;
+
+    const streamData = pdfBuffer.slice(ds, ei);
+    let content = '';
+
+    try { content = zlib.inflateSync(streamData).toString('latin1'); }
+    catch { try { content = zlib.inflateRawSync(streamData).toString('latin1'); }
+    catch { content = streamData.toString('latin1'); } }
+
+    const blocks = content.match(/BT[\s\S]*?ET/g) || [];
+    for (const block of blocks) {
+      // String literals: (text)Tj
+      for (const m of block.matchAll(/\(([^)]*)\)\s*(?:Tj|')/g))
+        allText += m[1] + ' ';
+      // Hex: <hex>Tj — handles Identity-H Unicode
+      for (const m of block.matchAll(/<([0-9A-Fa-f]{4,})>\s*(?:Tj|')/g)) {
+        const hex = m[1];
+        for (let i = 0; i < hex.length; i += 4) {
+          const code = parseInt(hex.slice(i, i+4), 16);
+          if (code > 31) allText += String.fromCodePoint(code);
+        }
+        allText += ' ';
+      }
+      // TJ arrays
+      for (const m of block.matchAll(/\[([^\]]*)\]\s*TJ/g)) {
+        for (const s of m[1].matchAll(/\(([^)]*)\)/g)) allText += s[1];
+        for (const h of m[1].matchAll(/<([0-9A-Fa-f]{4,})>/g)) {
+          const hex = h[1];
+          for (let i = 0; i < hex.length; i += 4) {
+            const code = parseInt(hex.slice(i, i+4), 16);
+            if (code > 31) allText += String.fromCodePoint(code);
+          }
+        }
+        allText += ' ';
+      }
+    }
+    pos = ei + 9;
+  }
+  return allText.trim();
+};
+
+// ══════════════════════════════════════════════
+// ROUTES
+// ══════════════════════════════════════════════
+
 router.get('/', async (req, res) => {
   try { res.json(await Invoice.find().sort({ createdAt: -1 })); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/invoices/:id
 router.get('/:id', async (req, res) => {
   try {
     let inv = null;
@@ -77,10 +154,9 @@ router.get('/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/invoices — upsert by invoiceNumber
 router.post('/', async (req, res) => {
   try {
-    const body  = req.body;
+    const body = req.body;
     const invNo = body.invoiceNumber;
     let inv;
     if (invNo) {
@@ -96,7 +172,6 @@ router.post('/', async (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-// PUT /api/invoices/:id
 router.put('/:id', async (req, res) => {
   try {
     let inv = null;
@@ -109,7 +184,6 @@ router.put('/:id', async (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-// DELETE /api/invoices/:id
 router.delete('/:id', async (req, res) => {
   try {
     let inv = null;
@@ -120,7 +194,6 @@ router.delete('/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/invoices/clear — type: 'vehicle' | 'service' | 'all'
 router.post('/clear', async (req, res) => {
   try {
     const { type } = req.body;
@@ -128,12 +201,10 @@ router.post('/clear', async (req, res) => {
     if (type === 'vehicle')      result = await Invoice.deleteMany({ invoiceType: 'vehicle' });
     else if (type === 'service') result = await Invoice.deleteMany({ invoiceType: 'service' });
     else                         result = await Invoice.deleteMany({});
-    console.log(`🗑️ Cleared ${result.deletedCount} (type: ${type})`);
     res.json({ success: true, deleted: result.deletedCount });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/invoices/sync
 router.post('/sync', async (req, res) => {
   try {
     const list = req.body.invoices || req.body;
@@ -144,17 +215,13 @@ router.post('/sync', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ════════════════════════════════════════════════════════════
-// POST /api/invoices/parse-pdf — returns full raw text
-// ════════════════════════════════════════════════════════════
+// POST /api/invoices/parse-pdf
 router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No PDF uploaded' });
     console.log(`\n📄 ${req.file.originalname} (${req.file.size} bytes)`);
-
     const text = await extractTextFromPDF(req.file.buffer);
     res.json({ success: true, text, filename: req.file.originalname });
-
   } catch (err) {
     console.error('❌ parse-pdf:', err.message);
     res.status(500).json({ error: err.message });
