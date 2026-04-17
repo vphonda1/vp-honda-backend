@@ -7,7 +7,7 @@ const FormData = require('form-data');
 const Invoice = require('../models/Invoice');
 
 // ===================== CONFIG =====================
-const OCR_API_KEY = 'K85340860888957'; // आपकी OCR key
+const OCR_API_KEY = 'K85340860888957';
 
 // ===================== HELPER: Extract text from PDF (native) =====================
 const extractTextFromPDF = async (pdfBuffer) => {
@@ -16,7 +16,7 @@ const extractTextFromPDF = async (pdfBuffer) => {
     return data.text;
   } catch (err) {
     console.warn('⚠️ PDF-parse failed:', err.message);
-    return null; // Return null, we'll try OCR
+    return null;
   }
 };
 
@@ -61,7 +61,6 @@ const extractTextUsingOCR = async (pdfBuffer, filename) => {
 const smartExtractText = async (pdfBuffer, filename) => {
   console.log(`📄 Smart extracting: ${filename}`);
   
-  // Try native PDF parsing first (fast)
   let text = await extractTextFromPDF(pdfBuffer);
   
   if (text && text.trim().length > 50) {
@@ -69,7 +68,6 @@ const smartExtractText = async (pdfBuffer, filename) => {
     return { text, method: 'native' };
   }
   
-  // Fallback to OCR
   console.log(`⚠️ Native failed, trying OCR...`);
   text = await extractTextUsingOCR(pdfBuffer, filename);
   
@@ -81,9 +79,12 @@ const smartExtractText = async (pdfBuffer, filename) => {
   throw new Error('Could not extract text from PDF (both native and OCR failed)');
 };
 
-// ===================== PARSE INVOICE FROM TEXT =====================
+// ===================== PARSE INVOICE FROM TEXT - FIXED =====================
 const parseInvoiceFromText = (rawText, filename) => {
-  const text = rawText.replace(/\r\n/g, '\n').replace(/\s+/g, ' ');
+  const text = rawText.replace(/\r\n/g, '\n');
+  const flat = text.replace(/\n/g, ' ').replace(/\s+/g, ' ');
+
+  console.log(`\n🔍 Parsing: ${filename}`);
   
   // ===== CUSTOMER NAME: From filename =====
   let customerName = filename
@@ -100,19 +101,16 @@ const parseInvoiceFromText = (rawText, filename) => {
     customerName = 'CUSTOMER';
   }
 
-  // ===== INVOICE NUMBER & DATE =====
+  // ===== INVOICE NUMBER =====
   let invoiceNumber = '';
-  let invoiceDate = new Date().toISOString().split('T')[0];
-  
   const invPatterns = [
-    /Invoice\s*(?:No\.?|#)?\s*:?\s*(\d{6,})/i,
-    /Invoice\s*No\s*:?\s*(\d+)/i,
-    /#\s*(\d{6,})/,
-    /(\d{6,})/
+    /Invoice\s*No\s*[:-]?\s*(\d{3,})/i,
+    /Invoice\s*#\s*(\d+)/i,
+    /INV\s*(\d+)/i,
   ];
   
   for (const pattern of invPatterns) {
-    const match = text.match(pattern);
+    const match = flat.match(pattern);
     if (match) {
       invoiceNumber = match[1];
       break;
@@ -124,13 +122,14 @@ const parseInvoiceFromText = (rawText, filename) => {
   }
 
   // ===== DATE: Proper validation =====
+  let invoiceDate = new Date().toISOString().split('T')[0];
   const datePatterns = [
-    /[Ii]nvoice\s*[Dd]ate\s*:?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/,
-    /[Dd]ate\s*:?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/,
+    /Invoice\s*Date\s*[:-]?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/i,
+    /Date\s*[:-]?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/i,
   ];
 
   for (const pattern of datePatterns) {
-    const match = text.match(pattern);
+    const match = flat.match(pattern);
     if (match) {
       let day = parseInt(match[1]);
       let month = parseInt(match[2]);
@@ -148,139 +147,135 @@ const parseInvoiceFromText = (rawText, filename) => {
     }
   }
 
-  // ===== VEHICLE & REG NO =====
+  // ===== VEHICLE: Model No ===== (✅ FIX #1)
   let vehicle = '';
-  let regNo = '';
-
   const vehiclePatterns = [
-    /[Vv]ehicle\s*(?:[Mm]odel)?\s*:?\s*([A-Z0-9\s]{4,30})/,
-    /[Mm]odel\s*:?\s*([A-Z0-9\s]{4,30})/,
-    /(SP125|Hero|Activa|Shine|Hornet|CD110|CB350|XF3R|Vento|Splendor|100|150|200|250|300)\s*([A-Z0-9\s]{0,20})?/i
+    /Model\s*No\s*[:-]?\s*([A-Z0-9 ]{4,40}?)(?=\s+(?:Colour|Color|Model\s*Code|Engine|Frame|Jobcard))/i,
+    /Model\s*Code?\s*[:-]?\s*([A-Z0-9 ]{3,30})/i,
+    /(SP125|Shine|Activa|Hornet|CB350|XF3R|CD110|100|150)\s+([A-Z0-9 ]{0,20})?/i,
   ];
 
   for (const pattern of vehiclePatterns) {
-    const match = text.match(pattern);
+    const match = flat.match(pattern);
     if (match) {
-      vehicle = (match[1] + ' ' + (match[2] || '')).trim().slice(0, 40);
+      vehicle = (match[1] + ' ' + (match[2] || '')).trim().toUpperCase().slice(0, 40);
       break;
     }
   }
 
-  const regPattern = /([A-Z]{2}\d{2}[A-Z]{1,3}\d{4})/i;
-  const regMatch = text.match(regPattern);
-  if (regMatch) {
-    regNo = regMatch[1].toUpperCase();
+  // ===== REG NO: Veh Number ===== (✅ FIX #2)
+  let regNo = '';
+  const regPatterns = [
+    /Veh(?:icle)?\s*Number\s*[:-]?\s*([A-Z]{2}\s*\d{2}\s*[A-Z]{1,3}\s*\d{4})/i,
+    /Registration\s*[:-]?\s*([A-Z]{2}\d{2}[A-Z]{1,3}\d{4})/i,
+    /\b([A-Z]{2}\d{2}[A-Z]{1,3}\d{4})\b/,
+  ];
+
+  for (const pattern of regPatterns) {
+    const match = flat.match(pattern);
+    if (match) {
+      regNo = match[1].replace(/\s+/g, '').toUpperCase();
+      break;
+    }
   }
 
   // ===== PHONE =====
   let customerPhone = '';
-  const phoneMatch = text.match(/\b(\d{10})\b/);
+  const phoneMatch = flat.match(/\b([6-9]\d{9})\b/);
   if (phoneMatch) {
     customerPhone = phoneMatch[1];
   }
 
-  // ===== PARTS PARSING =====
-  const items = [];
-  const lines = rawText.split('\n');
-  let inPartsSection = false;
+  // ===== AMOUNT: Total Invoice Value ===== (✅ FIX #3)
+  let grandTotal = 0;
+  const amountPatterns = [
+    /Total\s*Invoice\s*Value\s*\([Ii]n\s*[Ff]igure\)\s*[₹Rs.\s]*([\d,]+\.?\d*)/i,
+    /Invoice\s*Value\s*[₹Rs.\s]*([\d,]+\.?\d*)/i,
+    /Grand\s*Total\s*[₹Rs.\s]*([\d,]+\.?\d*)/i,
+    /Total\s*[₹Rs.\s]+([\d,]+\.?\d*)/i,
+  ];
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    
-    if (/Part\s*No|Description|Qty|MRP|Taxable|HSN|SAC/i.test(line)) {
-      inPartsSection = true;
-      continue;
-    }
-
-    if (inPartsSection && /Subtotal|Total|TAX SUMMARY|₹/i.test(line) && !line.match(/^[A-Z0-9]/)) {
-      inPartsSection = false;
-      continue;
-    }
-
-    if (inPartsSection && line.length > 10) {
-      const parts = line.split(/\s{2,}/);
-      
-      if (parts.length >= 4) {
-        const partNo = parts[0];
-        const description = parts[1] || '';
-        const qty = parseInt(parts[2]) || 1;
-        const mrp = parseFloat(parts[3]) || 0;
-        const taxableAmt = parseFloat(parts[4]) || mrp;
-        
-        let sgst = 0, cgst = 0, gstRate = 0;
-        
-        if (parts.length > 5) {
-          sgst = parseFloat(parts[5]) || 0;
-        }
-        if (parts.length > 6) {
-          cgst = parseFloat(parts[6]) || 0;
-        }
-
-        const gstAmount = sgst + cgst;
-        
-        if (taxableAmt > 0 && gstAmount > 0) {
-          gstRate = Math.round((gstAmount / taxableAmt) * 100);
-        } else if (sgst > 0) {
-          gstRate = sgst * 2;
-        }
-
-        if (partNo && partNo.match(/^[A-Z0-9]/)) {
-          items.push({
-            partNo,
-            description: description.slice(0, 40),
-            qty,
-            mrp: Math.round(mrp * 100) / 100,
-            taxableAmount: Math.round(taxableAmt * 100) / 100,
-            sgst: Math.round(sgst * 100) / 100,
-            cgst: Math.round(cgst * 100) / 100,
-            gstRate: gstRate || 0,
-            gstAmount: Math.round(gstAmount * 100) / 100,
-            total: Math.round((taxableAmt + gstAmount) * 100) / 100
-          });
-        }
+  for (const pattern of amountPatterns) {
+    const match = flat.match(pattern);
+    if (match) {
+      const amt = match[1].replace(/,/g, '');
+      const parsed = parseFloat(amt) || 0;
+      if (parsed > 0) {
+        grandTotal = parsed;
+        break;
       }
     }
   }
 
-  // ===== TOTALS =====
-  let subtotal = 0;
-  let totalGST = 0;
-  let grandTotal = 0;
+  // ===== PARTS/ITEMS ===== (✅ FIX #4)
+  const items = [];
+  const lines = text.split('\n');
+  
+  // Part number patterns
+  const partNoPattern = /^(\d+)\s+([A-Z0-9\-]+)\s+(.{1,50}?)\s+(\d+\.?\d*)\s+/gm;
+  let match;
 
-  const subtotalMatch = text.match(/Subtotal\s*:?\s*₹?\s*([\d,]+\.?\d*)/i);
-  const gstMatch = text.match(/(?:Total\s+)?(?:GST|IGST|SGST|CGST)\s*:?\s*₹?\s*([\d,]+\.?\d*)/i);
-  const totalMatch = text.match(/(?:Grand\s+)?Total\s*:?\s*₹?\s*([\d,]+\.?\d*)/i);
+  while ((match = partNoPattern.exec(flat)) !== null) {
+    const srNo = match[1];
+    const partNo = match[2];
+    const description = match[3]?.trim() || '';
+    
+    // Skip noise
+    if (/^(GSTIN|BCYPD|VPHONDA|STATE|PHONE|EMAIL|TOTAL|HSN|SAC|SGST|CGST|IGST)/i.test(partNo)) {
+      continue;
+    }
 
-  if (subtotalMatch) subtotal = parseFloat(subtotalMatch[1].replace(/,/g, ''));
-  if (gstMatch) totalGST = parseFloat(gstMatch[1].replace(/,/g, ''));
-  if (totalMatch) grandTotal = parseFloat(totalMatch[1].replace(/,/g, ''));
-
-  // Recalculate from items
-  if (items.length > 0) {
-    const itemSubtotal = items.reduce((sum, item) => sum + item.taxableAmount, 0);
-    const itemGST = items.reduce((sum, item) => sum + (item.sgst + item.cgst), 0);
-
-    if (subtotal === 0) subtotal = itemSubtotal;
-    if (totalGST === 0) totalGST = itemGST;
+    items.push({
+      partNo: partNo.slice(0, 20),
+      description: description.slice(0, 50),
+      qty: 1,
+      mrp: 0,
+      taxableAmount: 0,
+      sgst: 0,
+      cgst: 0,
+      gstRate: 9,
+      total: 0
+    });
   }
 
-  if (grandTotal === 0 && subtotal > 0) {
-    grandTotal = subtotal + totalGST;
+  // If no items found, try different pattern
+  if (items.length === 0) {
+    const partLines = text.split('\n').filter(l => 
+      /^\d+\s+[A-Z0-9\-]/.test(l.trim()) && 
+      !/TOTAL|TAX|GST|Invoice/.test(l)
+    );
+
+    partLines.slice(0, 10).forEach((line, idx) => {
+      const parts = line.trim().split(/\s{2,}/);
+      if (parts.length >= 2) {
+        items.push({
+          partNo: parts[1]?.slice(0, 20) || `PART${idx}`,
+          description: parts[2]?.slice(0, 50) || 'Service Item',
+          qty: 1,
+          mrp: 0,
+          taxableAmount: 0,
+          sgst: 0,
+          cgst: 0,
+          gstRate: 9,
+          total: 0
+        });
+      }
+    });
   }
 
   // ===== INVOICE TYPE DETECTION =====
   let invoiceType = 'service';
-  if (/Vehicle|Purchase|Purchase Date/i.test(text)) {
+  if (/Vehicle|Purchase|Sale|Showroom|Price/i.test(flat)) {
     invoiceType = 'vehicle';
   }
 
   let serviceNumber = null;
-  const svcMatch = text.match(/(\d+)(?:st|nd|rd|th)\s+Service/i);
+  const svcMatch = flat.match(/(\d+)\s*(?:st|nd|rd|th)\s+Service/i);
   if (svcMatch) {
     serviceNumber = parseInt(svcMatch[1]);
   }
 
-  return {
+  const result = {
     invoiceNumber,
     invoiceType,
     invoiceDate,
@@ -290,18 +285,27 @@ const parseInvoiceFromText = (rawText, filename) => {
     regNo,
     serviceNumber,
     items,
-    subtotal: Math.round(subtotal * 100) / 100,
-    totalGST: Math.round(totalGST * 100) / 100,
+    subtotal: Math.round(grandTotal * 100) / 100,
+    totalGST: 0,
     grandTotal: Math.round(grandTotal * 100) / 100,
     importedFrom: filename,
     importedAt: new Date().toISOString(),
     status: 'Active'
   };
+
+  console.log(`✅ Parsed:`);
+  console.log(`   Invoice: ${result.invoiceNumber}`);
+  console.log(`   Customer: ${result.customerName}`);
+  console.log(`   Vehicle: ${result.vehicle}`);
+  console.log(`   Reg No: ${result.regNo}`);
+  console.log(`   Amount: ₹${result.grandTotal}`);
+  console.log(`   Parts: ${result.items.length}`);
+
+  return result;
 };
 
 // ===================== ROUTES =====================
 
-// ✅ GET all invoices
 router.get('/', async (req, res) => {
   try {
     res.json(await Invoice.find().sort({ createdAt: -1 }));
@@ -310,7 +314,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// ✅ GET single invoice
 router.get('/:id', async (req, res) => {
   try {
     let inv = null;
@@ -325,7 +328,6 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// ✅ POST new invoice
 router.post('/', async (req, res) => {
   try {
     res.status(201).json(await Invoice.create(req.body));
@@ -334,7 +336,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-// ✅ PUT update invoice
 router.put('/:id', async (req, res) => {
   try {
     let inv = null;
@@ -349,7 +350,6 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// ✅ DELETE invoice
 router.delete('/:id', async (req, res) => {
   try {
     let inv = null;
@@ -364,7 +364,6 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// ✅ POST sync
 router.post('/sync', async (req, res) => {
   try {
     const list = req.body.invoices || req.body;
@@ -377,7 +376,6 @@ router.post('/sync', async (req, res) => {
   }
 });
 
-// ✅ POST clear by type
 router.post('/clear', async (req, res) => {
   try {
     const { type } = req.body;
@@ -392,14 +390,12 @@ router.post('/clear', async (req, res) => {
   }
 });
 
-// ✅ POST parse single PDF (HYBRID)
 router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No PDF file' });
 
     console.log(`\n📄 Processing: ${req.file.originalname}`);
     
-    // Smart extraction (tries native first, then OCR)
     const { text, method } = await smartExtractText(req.file.buffer, req.file.originalname);
     
     if (!text || text.length < 50) {
@@ -407,7 +403,6 @@ router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
     }
 
     const parsed = parseInvoiceFromText(text, req.file.originalname);
-    console.log(`✅ Parsed [${method}]: ${parsed.invoiceNumber} | ${parsed.customerName} | ₹${parsed.grandTotal}\n`);
 
     res.json({
       success: true,
@@ -422,7 +417,6 @@ router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
   }
 });
 
-// ✅ POST parse multiple PDFs (HYBRID)
 router.post('/parse-pdf-batch', upload.array('pdfs'), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
@@ -438,7 +432,6 @@ router.post('/parse-pdf-batch', upload.array('pdfs'), async (req, res) => {
         const { text, method } = await smartExtractText(file.buffer, file.originalname);
         const parsed = parseInvoiceFromText(text, file.originalname);
         results.push({...parsed, extractionMethod: method});
-        console.log(`✅ Parsed [${method}]: ${parsed.invoiceNumber}`);
       } catch (err) {
         console.error(`❌ ${file.originalname}:`, err.message);
         errors.push({
