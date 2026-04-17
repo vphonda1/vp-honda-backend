@@ -1,19 +1,31 @@
 const router = require('express').Router();
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
+const PDFParser = require('pdf-parse');
 const axios = require('axios');
 const FormData = require('form-data');
 
-const OCR_API_KEY = 'K85340860888957';  // आपकी दी हुई key
+// OCR API Key
+const OCR_API_KEY = 'K85340860888957';
 
-router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
+// ===================== Helper: Extract text from PDF (native) =====================
+const extractTextFromPDF = async (pdfBuffer) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'No PDF file' });
+    const data = await PDFParser(pdfBuffer);
+    return data.text;
+  } catch (err) {
+    console.warn('⚠️ PDF-parse failed:', err.message);
+    return null;
+  }
+};
 
-    console.log(`📄 Processing: ${req.file.originalname}`);
+// ===================== Helper: Extract text using OCR (fallback) =====================
+const extractTextUsingOCR = async (pdfBuffer, filename) => {
+  try {
+    console.log(`🔄 Trying OCR for: ${filename}`);
     
     const form = new FormData();
-    form.append('file', req.file.buffer, { filename: req.file.originalname });
+    form.append('file', pdfBuffer, { filename });
     form.append('apikey', OCR_API_KEY);
     form.append('language', 'eng');
     form.append('isOverlayRequired', 'false');
@@ -29,19 +41,66 @@ router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
       throw new Error(response.data.ErrorMessage?.[0] || 'OCR failed');
     }
 
-    let rawText = response.data.ParsedResults.map(r => r.ParsedText).join('\n');
-    // साफ़ करें: extra spaces, multiple newlines
-    let cleanText = rawText.replace(/\r\n/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n');
+    const rawText = response.data.ParsedResults.map(r => r.ParsedText).join('\n');
+    const cleanText = rawText.replace(/\r\n/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n');
     
-    if (!cleanText || cleanText.trim().length < 50) {
-      return res.status(400).json({ error: 'OCR could not extract enough text' });
+    if (cleanText && cleanText.trim().length > 50) {
+      console.log(`✅ OCR extracted ${cleanText.length} chars`);
+      return cleanText;
+    }
+    
+    return null;
+  } catch (err) {
+    console.error('❌ OCR error:', err.message);
+    return null;
+  }
+};
+
+// ===================== SMART TEXT EXTRACTION =====================
+const smartExtractText = async (pdfBuffer, filename) => {
+  console.log(`📄 Smart extracting: ${filename}`);
+  
+  let text = await extractTextFromPDF(pdfBuffer);
+  
+  if (text && text.trim().length > 50) {
+    console.log(`✅ Native extraction worked (${text.length} chars)`);
+    return { text, method: 'native' };
+  }
+  
+  console.log(`⚠️ Native failed, trying OCR...`);
+  text = await extractTextUsingOCR(pdfBuffer, filename);
+  
+  if (text && text.trim().length > 50) {
+    console.log(`✅ OCR extraction worked (${text.length} chars)`);
+    return { text, method: 'ocr' };
+  }
+  
+  throw new Error('Could not extract text from PDF (both native and OCR failed)');
+};
+
+// ===================== ROUTE: Extract text only (for frontend parsing) =====================
+router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No PDF file' });
+
+    console.log(`\n📄 Processing: ${req.file.originalname}`);
+    
+    const { text, method } = await smartExtractText(req.file.buffer, req.file.originalname);
+    
+    if (!text || text.length < 50) {
+      return res.status(400).json({ error: 'PDF में insufficient data है' });
     }
 
-    console.log(`✅ OCR extracted ${cleanText.length} chars`);
-    res.json({ text: cleanText, length: cleanText.length });
-    
+    // ✅ Return ONLY the raw text - frontend will parse it!
+    res.json({
+      success: true,
+      text: text,
+      extractionMethod: method,
+      filename: req.file.originalname
+    });
+
   } catch (err) {
-    console.error('OCR error:', err.message);
+    console.error('❌ Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
