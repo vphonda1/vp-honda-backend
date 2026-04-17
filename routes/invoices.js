@@ -2,35 +2,47 @@ const router  = require('express').Router();
 const multer  = require('multer');
 const upload  = multer({ storage: multer.memoryStorage() });
 const path    = require('path');
+const fs      = require('fs');
 const Invoice = require('../models/Invoice');
 
 // ════════════════════════════════════════════════════════════
-// PDF TEXT EXTRACTION
-// pdfjs-dist@3.11.174 with NodeCMapReaderFactory
-// This is REQUIRED for Excel PDF font encoding (Identity-H)
+// CUSTOM CMapReaderFactory — reads local .bcmap files
+// Required: npm install pdfjs-dist@3.11.174
+// ════════════════════════════════════════════════════════════
+class LocalCMapReader {
+  constructor({ baseUrl, isCompressed }) {
+    this._dir        = baseUrl;
+    this._compressed = isCompressed;
+  }
+  async fetch({ name }) {
+    const file = path.join(this._dir, name + (this._compressed ? '.bcmap' : ''));
+    const data = fs.readFileSync(file);
+    return {
+      cMapData:        new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+      compressionType: this._compressed ? 1 : 0,
+    };
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// PDF TEXT EXTRACTION — 3-method fallback chain
 // ════════════════════════════════════════════════════════════
 const extractTextFromPDF = async (pdfBuffer) => {
 
-  // ── Method 1: pdfjs-dist legacy + NodeCMapReaderFactory ──
+  // ── Method 1: pdfjs-dist@3.x + custom CMapReader ─────────
   try {
     const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
-    const pdfjsDir = path.dirname(require.resolve('pdfjs-dist/package.json'));
-
-    // NodeCMapReaderFactory reads local cmap files — decodes Excel fonts
-    const { NodeCMapReaderFactory, NodeStandardFontDataFactory } = pdfjsLib;
-
-    const cMapUrl      = path.join(pdfjsDir, 'cmaps')          + '/';
-    const stdFontUrl   = path.join(pdfjsDir, 'standard_fonts') + '/';
+    const pdfjsDir  = path.dirname(require.resolve('pdfjs-dist/package.json'));
+    const cmapDir   = path.join(pdfjsDir, 'cmaps');
+    const stdFontDir = path.join(pdfjsDir, 'standard_fonts');
 
     const uint8 = new Uint8Array(pdfBuffer);
     const pdf   = await pdfjsLib.getDocument({
-      data:                    uint8,
-      CMapReaderFactory:       NodeCMapReaderFactory,
-      cMapUrl:                 cMapUrl,
-      cMapPacked:              true,
-      StandardFontDataFactory: NodeStandardFontDataFactory,
-      standardFontDataUrl:     stdFontUrl,
-      verbosity:               0,
+      data:              uint8,
+      CMapReaderFactory: LocalCMapReader,
+      cMapUrl:           cmapDir,
+      cMapPacked:        true,
+      verbosity:         0,
     }).promise;
 
     let text = '';
@@ -42,16 +54,16 @@ const extractTextFromPDF = async (pdfBuffer) => {
 
     const clean = text.replace(/\s+/g, ' ').trim();
     if (clean.length > 20) {
-      console.log(`✅ pdfjs NodeCMap: ${clean.length} chars`);
+      console.log(`✅ pdfjs LocalCMap: ${clean.length} chars`);
       return text;
     }
-    throw new Error('pdfjs returned empty/short text');
+    throw new Error('pdfjs returned empty text');
 
   } catch (e1) {
-    console.warn('⚠️ pdfjs/legacy failed:', e1.message);
+    console.warn('⚠️ pdfjs failed:', e1.message);
   }
 
-  // ── Method 2: pdf-parse fallback ──
+  // ── Method 2: pdf-parse ───────────────────────────────────
   try {
     const PDFParser = require('pdf-parse');
     const data = await PDFParser(pdfBuffer);
@@ -60,84 +72,96 @@ const extractTextFromPDF = async (pdfBuffer) => {
       console.log(`✅ pdf-parse: ${clean.length} chars`);
       return data.text;
     }
-    throw new Error('pdf-parse returned empty text');
+    throw new Error('pdf-parse returned empty');
   } catch (e2) {
     console.warn('⚠️ pdf-parse failed:', e2.message);
   }
 
-  // ── Method 3: Raw binary extraction (last resort) ──
+  // ── Method 3: Raw binary — handles Identity-H hex text ───
   try {
-    const text = extractTextRaw(pdfBuffer);
+    const text = extractRaw(pdfBuffer);
     if (text.length > 20) {
       console.log(`✅ raw extraction: ${text.length} chars`);
       return text;
     }
-    throw new Error('raw extraction empty');
+    throw new Error('raw returned empty');
   } catch (e3) {
-    console.error('❌ All methods failed:', e3.message);
+    console.error('❌ All 3 methods failed:', e3.message);
     throw new Error('PDF se text extract nahi hua');
   }
 };
 
-// Raw binary PDF text extractor (handles compressed streams)
-const extractTextRaw = (pdfBuffer) => {
+// ── Raw binary PDF text extractor ────────────────────────────
+const extractRaw = (buf) => {
   const zlib = require('zlib');
-  let allText = '';
-  let pos = 0;
-
-  while (pos < pdfBuffer.length) {
-    const si = pdfBuffer.indexOf('stream', pos);
+  let out = '', pos = 0;
+  while (pos < buf.length) {
+    // Find next 'stream' marker (preceded by whitespace to avoid 'endstream')
+    let si = -1;
+    let searchPos = pos;
+    while (searchPos < buf.length) {
+      const idx = buf.indexOf('stream', searchPos);
+      if (idx === -1) { searchPos = buf.length; break; }
+      // Make sure it's not 'endstream'
+      const before = buf.slice(Math.max(0, idx-3), idx).toString('ascii');
+      if (!before.includes('end')) { si = idx; break; }
+      searchPos = idx + 6;
+    }
     if (si === -1) break;
 
     let ds = si + 6;
-    if (pdfBuffer[ds] === 0x0D) ds++;
-    if (pdfBuffer[ds] === 0x0A) ds++;
-
-    const ei = pdfBuffer.indexOf('endstream', ds);
+    if (buf[ds] === 0x0D) ds++;
+    if (buf[ds] === 0x0A) ds++;
+    const ei = buf.indexOf('endstream', ds);
     if (ei === -1) break;
 
-    const streamData = pdfBuffer.slice(ds, ei);
+    const raw = buf.slice(ds, ei);
     let content = '';
-
-    try { content = zlib.inflateSync(streamData).toString('latin1'); }
-    catch { try { content = zlib.inflateRawSync(streamData).toString('latin1'); }
-    catch { content = streamData.toString('latin1'); } }
+    try { content = zlib.inflateSync(raw).toString('latin1'); }
+    catch { try { content = zlib.inflateRawSync(raw).toString('latin1'); }
+    catch { content = raw.toString('latin1'); } }
 
     const blocks = content.match(/BT[\s\S]*?ET/g) || [];
     for (const block of blocks) {
-      // String literals: (text)Tj
+      // String literals (text)Tj
       for (const m of block.matchAll(/\(([^)]*)\)\s*(?:Tj|')/g))
-        allText += m[1] + ' ';
-      // Hex: <hex>Tj — handles Identity-H Unicode
-      for (const m of block.matchAll(/<([0-9A-Fa-f]{4,})>\s*(?:Tj|')/g)) {
-        const hex = m[1];
-        for (let i = 0; i < hex.length; i += 4) {
-          const code = parseInt(hex.slice(i, i+4), 16);
-          if (code > 31) allText += String.fromCodePoint(code);
+        out += m[1] + ' ';
+      // Hex <XXXX>Tj — Identity-H Unicode
+      for (const m of block.matchAll(/<([0-9A-Fa-f]{2,})>\s*(?:Tj|')/g)) {
+        const h = m[1];
+        if (h.length % 4 === 0) {
+          for (let i = 0; i < h.length; i += 4) {
+            const c = parseInt(h.slice(i, i+4), 16);
+            if (c > 31 && c < 0xFFFD) out += String.fromCodePoint(c);
+          }
+        } else {
+          for (let i = 0; i < h.length; i += 2) {
+            const c = parseInt(h.slice(i, i+2), 16);
+            if (c > 31) out += String.fromCharCode(c);
+          }
         }
-        allText += ' ';
+        out += ' ';
       }
       // TJ arrays
       for (const m of block.matchAll(/\[([^\]]*)\]\s*TJ/g)) {
-        for (const s of m[1].matchAll(/\(([^)]*)\)/g)) allText += s[1];
+        for (const s of m[1].matchAll(/\(([^)]*)\)/g)) out += s[1];
         for (const h of m[1].matchAll(/<([0-9A-Fa-f]{4,})>/g)) {
-          const hex = h[1];
-          for (let i = 0; i < hex.length; i += 4) {
-            const code = parseInt(hex.slice(i, i+4), 16);
-            if (code > 31) allText += String.fromCodePoint(code);
+          for (let i = 0; i < h[1].length; i += 4) {
+            const c = parseInt(h[1].slice(i, i+4), 16);
+            if (c > 31 && c < 0xFFFD) out += String.fromCodePoint(c);
           }
         }
-        allText += ' ';
+        out += ' ';
       }
     }
     pos = ei + 9;
   }
-  return allText.trim();
+  return out.trim();
 };
 
-// ══════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════
 // ROUTES
-// ══════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════
 
 router.get('/', async (req, res) => {
   try { res.json(await Invoice.find().sort({ createdAt: -1 })); }
@@ -156,8 +180,7 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const body = req.body;
-    const invNo = body.invoiceNumber;
+    const body = req.body, invNo = body.invoiceNumber;
     let inv;
     if (invNo) {
       inv = await Invoice.findOneAndUpdate(
@@ -165,9 +188,7 @@ router.post('/', async (req, res) => {
         { $set: body },
         { upsert: true, new: true, setDefaultsOnInsert: true }
       );
-    } else {
-      inv = await Invoice.create(body);
-    }
+    } else { inv = await Invoice.create(body); }
     res.status(201).json(inv);
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
@@ -215,7 +236,6 @@ router.post('/sync', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/invoices/parse-pdf
 router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No PDF uploaded' });
