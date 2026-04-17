@@ -1,63 +1,68 @@
 const router = require('express').Router();
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
-const PDFParser = require('pdf-parse');
 const Invoice = require('../models/Invoice');
 
-// ══════════════════════════════════════════════════════════════
-// HELPER: Extract text from PDF buffer using pdf-parse (native)
-// Excel-generated PDFs are text-based — OCR not needed
-// ══════════════════════════════════════════════════════════════
+// PDF TEXT EXTRACTION — pdfjs-dist Node.js + pdf-parse fallback
 const extractTextFromPDF = async (pdfBuffer) => {
+  // Method 1: pdfjs-dist (best for Excel PDFs, no worker in Node.js)
   try {
+    const pdfjs = await import('pdfjs-dist');
+    const uint8 = new Uint8Array(pdfBuffer);
+    const pdf = await pdfjs.getDocument({ data: uint8, useSystemFonts: true, verbosity: 0 }).promise;
+    let text = '';
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const tc = await page.getTextContent();
+      text += tc.items.map(i => i.str).join(' ') + '\n';
+    }
+    if (text.trim().length > 20) {
+      console.log(`✅ pdfjs-dist: ${text.length} chars`);
+      return text;
+    }
+    throw new Error('empty text');
+  } catch (e1) {
+    console.warn('⚠️ pdfjs-dist failed:', e1.message);
+  }
+
+  // Method 2: pdf-parse fallback
+  try {
+    const PDFParser = require('pdf-parse');
     const data = await PDFParser(pdfBuffer);
-    return data.text;
-  } catch (err) {
-    console.warn('⚠️ PDF-parse failed:', err.message);
-    return null;
+    if (data.text && data.text.trim().length > 20) {
+      console.log(`✅ pdf-parse: ${data.text.length} chars`);
+      return data.text;
+    }
+    throw new Error('empty text');
+  } catch (e2) {
+    throw new Error('PDF text extract failed: ' + e2.message);
   }
 };
 
-// ══════════════════════════════════════════════════════════════
-// GET /api/invoices — fetch all invoices, newest first
-// ══════════════════════════════════════════════════════════════
+// GET /api/invoices
 router.get('/', async (req, res) => {
-  try {
-    const invoices = await Invoice.find().sort({ createdAt: -1 });
-    res.json(invoices);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  try { res.json(await Invoice.find().sort({ createdAt: -1 })); }
+  catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ══════════════════════════════════════════════════════════════
-// GET /api/invoices/:id — fetch single invoice by _id or invoiceNumber
-// ══════════════════════════════════════════════════════════════
+// GET /api/invoices/:id
 router.get('/:id', async (req, res) => {
   try {
     let inv = null;
-    if (req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
-      inv = await Invoice.findById(req.params.id);
-    }
+    if (req.params.id.match(/^[0-9a-fA-F]{24}$/)) inv = await Invoice.findById(req.params.id);
     if (!inv) inv = await Invoice.findOne({ invoiceNumber: req.params.id });
     if (!inv) return res.status(404).json({ error: 'Not found' });
     res.json(inv);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ══════════════════════════════════════════════════════════════
-// POST /api/invoices — create or update invoice (upsert by invoiceNumber)
-// Prevents duplicate key errors on repeated import
-// ══════════════════════════════════════════════════════════════
+// POST /api/invoices — upsert (no duplicate key errors)
 router.post('/', async (req, res) => {
   try {
     const body = req.body;
     const invNo = body.invoiceNumber;
     let inv;
     if (invNo) {
-      // Upsert: if same invoiceNumber exists, update it
       inv = await Invoice.findOneAndUpdate(
         { invoiceNumber: String(invNo) },
         { $set: body },
@@ -67,52 +72,47 @@ router.post('/', async (req, res) => {
       inv = await Invoice.create(body);
     }
     res.status(201).json(inv);
-  } catch (err) {
-    console.error('❌ Invoice save error:', err.message);
-    res.status(400).json({ error: err.message });
-  }
+  } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-// ══════════════════════════════════════════════════════════════
-// PUT /api/invoices/:id — update invoice
-// ══════════════════════════════════════════════════════════════
+// PUT /api/invoices/:id
 router.put('/:id', async (req, res) => {
   try {
     let inv = null;
-    if (req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+    if (req.params.id.match(/^[0-9a-fA-F]{24}$/))
       inv = await Invoice.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    }
-    if (!inv) inv = await Invoice.findOneAndUpdate(
-      { invoiceNumber: req.params.id }, req.body, { new: true }
-    );
+    if (!inv)
+      inv = await Invoice.findOneAndUpdate({ invoiceNumber: req.params.id }, req.body, { new: true });
     if (!inv) return res.status(404).json({ error: 'Not found' });
     res.json(inv);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
+  } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-// ══════════════════════════════════════════════════════════════
-// DELETE /api/invoices/:id — delete single invoice
-// Accepts MongoDB _id OR invoiceNumber
-// ══════════════════════════════════════════════════════════════
+// DELETE /api/invoices/:id
 router.delete('/:id', async (req, res) => {
   try {
     let inv = null;
-    if (req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
-      inv = await Invoice.findByIdAndDelete(req.params.id);
-    }
+    if (req.params.id.match(/^[0-9a-fA-F]{24}$/)) inv = await Invoice.findByIdAndDelete(req.params.id);
     if (!inv) inv = await Invoice.findOneAndDelete({ invoiceNumber: req.params.id });
     if (!inv) return res.status(404).json({ error: 'Not found' });
-    res.json({ success: true, deleted: req.params.id });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ══════════════════════════════════════════════════════════════
-// POST /api/invoices/sync — bulk replace all invoices
-// ══════════════════════════════════════════════════════════════
+// POST /api/invoices/clear — type: 'vehicle' | 'service' | 'all'
+router.post('/clear', async (req, res) => {
+  try {
+    const { type } = req.body;
+    let result;
+    if (type === 'vehicle') result = await Invoice.deleteMany({ invoiceType: 'vehicle' });
+    else if (type === 'service') result = await Invoice.deleteMany({ invoiceType: 'service' });
+    else result = await Invoice.deleteMany({});
+    console.log(`🗑️ Cleared ${result.deletedCount} (type:${type})`);
+    res.json({ success: true, deleted: result.deletedCount });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/invoices/sync
 router.post('/sync', async (req, res) => {
   try {
     const list = req.body.invoices || req.body;
@@ -120,62 +120,18 @@ router.post('/sync', async (req, res) => {
     await Invoice.deleteMany({});
     if (list.length > 0) await Invoice.insertMany(list);
     res.json({ success: true, count: list.length });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ══════════════════════════════════════════════════════════════
-// POST /api/invoices/clear — delete by type: 'vehicle', 'service', or 'all'
-// Used by Clear Vehicle / Clear Service / Clear All buttons
-// ══════════════════════════════════════════════════════════════
-router.post('/clear', async (req, res) => {
-  try {
-    const { type } = req.body;
-    let result;
-    if (type === 'vehicle') {
-      result = await Invoice.deleteMany({ invoiceType: 'vehicle' });
-    } else if (type === 'service') {
-      result = await Invoice.deleteMany({ invoiceType: 'service' });
-    } else {
-      // 'all' or any other value → delete everything
-      result = await Invoice.deleteMany({});
-    }
-    console.log(`🗑️ Cleared ${result.deletedCount} invoices (type: ${type})`);
-    res.json({ success: true, deleted: result.deletedCount });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════
-// POST /api/invoices/parse-pdf — extract raw text from PDF
-// Returns full text to frontend for parseVPHondaInvoice() parsing
-// Excel-generated PDFs (text-based) — pdf-parse works perfectly
-// ══════════════════════════════════════════════════════════════
+// POST /api/invoices/parse-pdf — return full raw text to frontend
 router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'No PDF file uploaded' });
-
-    console.log(`\n📄 parse-pdf: ${req.file.originalname} (${req.file.size} bytes)`);
-
+    if (!req.file) return res.status(400).json({ error: 'No PDF uploaded' });
+    console.log(`\n📄 ${req.file.originalname} (${req.file.size} bytes)`);
     const text = await extractTextFromPDF(req.file.buffer);
-
-    if (!text || text.trim().length < 20) {
-      return res.status(400).json({ error: 'PDF से text extract नहीं हुआ' });
-    }
-
-    console.log(`✅ Extracted ${text.length} chars from ${req.file.originalname}`);
-
-    // Return FULL raw text — frontend parseVPHondaInvoice() will parse it
-    res.json({
-      success: true,
-      text: text,                        // ← full text, not truncated
-      filename: req.file.originalname,
-    });
-
+    res.json({ success: true, text, filename: req.file.originalname });
   } catch (err) {
-    console.error('❌ parse-pdf error:', err.message);
+    console.error('❌ parse-pdf:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
