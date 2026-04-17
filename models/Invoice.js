@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const invoiceSchema = new mongoose.Schema({
-  invoiceNumber: { type: String, required: true, unique: true, index: true },
+  invoiceNumber: { type: String, required: true, unique: true },
   invoiceType: { type: String, enum: ['vehicle', 'service'], default: 'service' }, // ✅ NEW
   
   // Customer Info

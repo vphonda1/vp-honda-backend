@@ -9,8 +9,6 @@ const app = express();
 // ════════════════════════════════════════════
 // MIDDLEWARE
 // ════════════════════════════════════════════
-
-// CORS - Very Important for Vercel frontend!
 app.use(cors({
   origin: [
     'http://localhost:3000',
@@ -25,35 +23,28 @@ app.use(cors({
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
-// Static files
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ════════════════════════════════════════════
-// MONGODB CONNECTION
+// MONGODB CONNECTION – FIXED VARIABLE NAME
 // ════════════════════════════════════════════
-
-const mongoUri = process.env.MONGO_URI || 'mongodb+srv://username:password@cluster.mongodb.net/vp-honda';
+// अब `MONGODB_URI` पढ़ेगा, जो .env और Render में है
+const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://username:password@cluster.mongodb.net/vp-honda';
 
 mongoose.connect(mongoUri, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
+  // useNewUrlParser और useUnifiedTopology हटा दिए (deprecated)
   serverSelectionTimeoutMS: 5000,
   socketTimeoutMS: 45000,
 })
-  .then(() => {
-    console.log('✅ MongoDB Connected');
-  })
+  .then(() => console.log('✅ MongoDB Connected'))
   .catch((err) => {
     console.error('❌ MongoDB Connection Error:', err.message);
     process.exit(1);
   });
 
 // ════════════════════════════════════════════
-// ROUTES
+// ROUTES (आपके जैसे ही)
 // ════════════════════════════════════════════
-
-// Health check
 app.get('/', (req, res) => {
   res.json({
     status: 'ok',
@@ -63,10 +54,9 @@ app.get('/', (req, res) => {
   });
 });
 
-// API Routes
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/parts', require('./routes/parts'));
-app.use('/api/invoices', require('./routes/invoices'));        // ← Main invoices route
+app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/reminders', require('./routes/reminders'));
 app.use('/api/serviceCustomers', require('./routes/serviceCustomers'));
 app.use('/api/dashboard', require('./routes/dashboard'));
@@ -78,17 +68,10 @@ app.use('/api', require('./routes/dataImport'));
 // ════════════════════════════════════════════
 // ERROR HANDLING
 // ════════════════════════════════════════════
-
-// 404 handler
 app.use((req, res) => {
-  res.status(404).json({
-    error: 'Route not found',
-    path: req.path,
-    method: req.method,
-  });
+  res.status(404).json({ error: 'Route not found', path: req.path, method: req.method });
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
   console.error('❌ Error:', err);
   res.status(err.status || 500).json({
@@ -100,9 +83,7 @@ app.use((err, req, res, next) => {
 // ════════════════════════════════════════════
 // START SERVER
 // ════════════════════════════════════════════
-
 const PORT = process.env.PORT || 5000;
-
 app.listen(PORT, () => {
   console.log(`🚀 VP Honda API running on port ${PORT}`);
   console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
