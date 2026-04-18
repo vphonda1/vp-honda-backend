@@ -7,10 +7,10 @@ require('dotenv').config();
 const app = express();
 
 // ════════════════════════════════════════════
-// CORS – पूरी तरह खुला (अभी टेस्ट के लिए)
+// CORS
 // ════════════════════════════════════════════
 app.use(cors({
-  origin: '*', // सभी origins को allow (बाद में आप सिर्फ अपने frontend URL से बदल सकते हैं)
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -39,15 +39,22 @@ mongoose.connect(mongoUri, {
   });
 
 // ════════════════════════════════════════════
-// ROUTES (सिर्फ JSON API)
+// ROUTES
 // ════════════════════════════════════════════
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'VP Honda API' });
+  res.json({
+    status: 'ok',
+    app: 'VP Honda Dealership API',
+    version: '1.0.0',
+    db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/parts', require('./routes/parts'));
-app.use('/api/invoices', require('./routes/invoices'));  // ← यह फाइल नीचे दी है
+app.use('/api/invoices', require('./routes/invoices'));
+app.use('/api/invoices', require('./routes/pdf'));       // ← PDF parse route
 app.use('/api/reminders', require('./routes/reminders'));
 app.use('/api/serviceCustomers', require('./routes/serviceCustomers'));
 app.use('/api/dashboard', require('./routes/dashboard'));

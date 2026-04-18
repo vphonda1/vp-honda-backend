@@ -5,25 +5,23 @@ const PDFParser = require('pdf-parse');
 const axios = require('axios');
 const FormData = require('form-data');
 
-// OCR API Key
 const OCR_API_KEY = 'K85340860888957';
 
-// ===================== Helper: Extract text from PDF (native) =====================
+// Native PDF text extraction
 const extractTextFromPDF = async (pdfBuffer) => {
   try {
     const data = await PDFParser(pdfBuffer);
     return data.text;
   } catch (err) {
-    console.warn('⚠️ PDF-parse failed:', err.message);
+    console.warn('PDF-parse failed:', err.message);
     return null;
   }
 };
 
-// ===================== Helper: Extract text using OCR (fallback) =====================
+// OCR fallback for scanned PDFs
 const extractTextUsingOCR = async (pdfBuffer, filename) => {
   try {
-    console.log(`🔄 Trying OCR for: ${filename}`);
-    
+    console.log(`OCR trying: ${filename}`);
     const form = new FormData();
     form.append('file', pdfBuffer, { filename });
     form.append('apikey', OCR_API_KEY);
@@ -45,53 +43,46 @@ const extractTextUsingOCR = async (pdfBuffer, filename) => {
     const cleanText = rawText.replace(/\r\n/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n');
     
     if (cleanText && cleanText.trim().length > 50) {
-      console.log(`✅ OCR extracted ${cleanText.length} chars`);
+      console.log(`OCR extracted ${cleanText.length} chars`);
       return cleanText;
     }
-    
     return null;
   } catch (err) {
-    console.error('❌ OCR error:', err.message);
+    console.error('OCR error:', err.message);
     return null;
   }
 };
 
-// ===================== SMART TEXT EXTRACTION =====================
+// Smart extraction: try native first, then OCR
 const smartExtractText = async (pdfBuffer, filename) => {
-  console.log(`📄 Smart extracting: ${filename}`);
-  
   let text = await extractTextFromPDF(pdfBuffer);
   
   if (text && text.trim().length > 50) {
-    console.log(`✅ Native extraction worked (${text.length} chars)`);
     return { text, method: 'native' };
   }
   
-  console.log(`⚠️ Native failed, trying OCR...`);
+  console.log('Native failed, trying OCR...');
   text = await extractTextUsingOCR(pdfBuffer, filename);
   
   if (text && text.trim().length > 50) {
-    console.log(`✅ OCR extraction worked (${text.length} chars)`);
     return { text, method: 'ocr' };
   }
   
-  throw new Error('Could not extract text from PDF (both native and OCR failed)');
+  throw new Error('Could not extract text from PDF');
 };
 
-// ===================== ROUTE: Extract text only (for frontend parsing) =====================
+// ROUTE: Extract text from PDF (frontend will parse)
 router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No PDF file' });
 
-    console.log(`\n📄 Processing: ${req.file.originalname}`);
-    
+    console.log(`Processing: ${req.file.originalname}`);
     const { text, method } = await smartExtractText(req.file.buffer, req.file.originalname);
     
     if (!text || text.length < 50) {
-      return res.status(400).json({ error: 'PDF में insufficient data है' });
+      return res.status(400).json({ error: 'PDF में insufficient data' });
     }
 
-    // ✅ Return ONLY the raw text - frontend will parse it!
     res.json({
       success: true,
       text: text,
@@ -100,7 +91,7 @@ router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
     });
 
   } catch (err) {
-    console.error('❌ Error:', err.message);
+    console.error('PDF Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
