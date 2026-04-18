@@ -1,12 +1,12 @@
 const router = require('express').Router();
 const mongoose = require('mongoose');
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage() });
 
-// Use existing model or create new
+// Invoice Model
 let Invoice;
-try {
-  Invoice = mongoose.model('Invoice');
-} catch {
-  const invoiceSchema = new mongoose.Schema({
+try { Invoice = mongoose.model('Invoice'); } catch {
+  Invoice = mongoose.model('Invoice', new mongoose.Schema({
     invoiceNumber: { type: String, index: true },
     invoiceType: { type: String, default: 'service' },
     customerName: { type: String, default: '' },
@@ -14,32 +14,60 @@ try {
     customerId: { type: String, default: '' },
     vehicle: { type: String, default: '' },
     regNo: { type: String, default: '' },
-    frameNo: { type: String, default: '' },
-    engineNo: { type: String, default: '' },
-    invoiceDate: { type: String, default: '' },
-    paymentMode: { type: String, default: 'CASH' },
-    serviceKm: { type: Number, default: 0 },
-    serviceType: { type: String, default: '' },
-    serviceNumber: { type: Number, default: null },
     items: [{ type: mongoose.Schema.Types.Mixed }],
     totals: { type: mongoose.Schema.Types.Mixed, default: {} },
-    importedFrom: { type: String, default: '' },
-    importedAt: { type: String, default: '' },
-    status: { type: String, default: 'Active' },
-    source: { type: String, default: '' },
-  }, { timestamps: true, strict: false });
-  Invoice = mongoose.model('Invoice', invoiceSchema);
+  }, { timestamps: true, strict: false }));
 }
 
-// GET all
-router.get('/', async (req, res) => {
+// ═══ PDF TEXT EXTRACTION (parse-pdf) ═══
+router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
   try {
-    const invoices = await Invoice.find().sort({ createdAt: -1 });
-    res.json(invoices);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    if (!req.file) return res.status(400).json({ error: 'No PDF file' });
+    console.log('Processing:', req.file.originalname);
+    
+    let text = '';
+    try {
+      const PDFParser = require('pdf-parse');
+      const data = await PDFParser(req.file.buffer);
+      text = data.text;
+    } catch (err) {
+      console.log('pdf-parse failed:', err.message);
+    }
+    
+    if (!text || text.trim().length < 50) {
+      // OCR fallback
+      try {
+        const axios = require('axios');
+        const FormData = require('form-data');
+        const form = new FormData();
+        form.append('file', req.file.buffer, { filename: req.file.originalname });
+        form.append('apikey', 'K85340860888957');
+        form.append('language', 'eng');
+        form.append('isOverlayRequired', 'false');
+        const ocrRes = await axios.post('https://api.ocr.space/parse/image', form, { headers: form.getHeaders(), timeout: 120000 });
+        if (!ocrRes.data.IsErroredOnProcessing) {
+          text = ocrRes.data.ParsedResults.map(r => r.ParsedText).join('\n');
+        }
+      } catch (ocrErr) { console.log('OCR failed:', ocrErr.message); }
+    }
+    
+    if (!text || text.trim().length < 20) {
+      return res.status(400).json({ error: 'PDF se text extract nahi ho paya' });
+    }
+    
+    res.json({ success: true, text, extractionMethod: 'native', filename: req.file.originalname });
+  } catch (err) {
+    console.error('PDF Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// GET by id or invoiceNumber
+// ═══ CRUD ═══
+router.get('/', async (req, res) => {
+  try { res.json(await Invoice.find().sort({ createdAt: -1 })); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     let inv = null;
@@ -50,15 +78,10 @@ router.get('/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST — upsert by invoiceNumber
 router.post('/', async (req, res) => {
   try {
     const body = { ...req.body };
-    // Remove fields that cause ObjectId cast errors
     delete body._id;
-    if (body.customerId && !body.customerId.match(/^[0-9a-fA-F]{24}$/)) {
-      // Keep as string, don't let mongoose try to cast
-    }
     const invNo = body.invoiceNumber;
     let inv;
     if (invNo) {
@@ -67,14 +90,11 @@ router.post('/', async (req, res) => {
         { $set: body },
         { upsert: true, new: true, setDefaultsOnInsert: true }
       );
-    } else {
-      inv = await Invoice.create(body);
-    }
+    } else { inv = await Invoice.create(body); }
     res.status(201).json(inv);
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-// PUT
 router.put('/:id', async (req, res) => {
   try {
     let inv = null;
@@ -85,7 +105,6 @@ router.put('/:id', async (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-// DELETE
 router.delete('/:id', async (req, res) => {
   try {
     let inv = null;
@@ -96,7 +115,7 @@ router.delete('/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /clear — clear by type or all
+// ═══ CLEAR & SYNC ═══
 router.post('/clear', async (req, res) => {
   try {
     const { type } = req.body;
@@ -108,7 +127,6 @@ router.post('/clear', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /sync — bulk replace
 router.post('/sync', async (req, res) => {
   try {
     const list = req.body.invoices || req.body;
