@@ -1,33 +1,153 @@
 const router = require('express').Router();
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
+const path = require('path');
+const fs = require('fs');
 const Invoice = require('../models/Invoice');
-const pdfParse = require('pdf-parse');
 
 // ════════════════════════════════════════════════════════════
-// PDF TEXT EXTRACTION – केवल pdf-parse (सबसे विश्वसनीय)
+// CUSTOM CMapReaderFactory (pdfjs-dist के लिए)
+// ════════════════════════════════════════════════════════════
+class LocalCMapReader {
+  constructor({ baseUrl, isCompressed }) {
+    this._dir = baseUrl;
+    this._compressed = isCompressed;
+  }
+  async fetch({ name }) {
+    const file = path.join(this._dir, name + (this._compressed ? '.bcmap' : ''));
+    const data = fs.readFileSync(file);
+    return {
+      cMapData: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+      compressionType: this._compressed ? 1 : 0,
+    };
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// PDF TEXT EXTRACTION – आपका मूल 3-मेथड फॉलबैक (काम करता है)
 // ════════════════════════════════════════════════════════════
 const extractTextFromPDF = async (pdfBuffer) => {
+  // Method 1: pdfjs-dist
   try {
-    const data = await pdfParse(pdfBuffer);
-    const text = data.text || '';
-    if (text.trim().length > 20) {
-      console.log(`✅ pdf-parse: ${text.length} chars`);
+    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+    const pdfjsDir = path.dirname(require.resolve('pdfjs-dist/package.json'));
+    const cmapDir = path.join(pdfjsDir, 'cmaps');
+    const uint8 = new Uint8Array(pdfBuffer);
+    const pdf = await pdfjsLib.getDocument({
+      data: uint8,
+      CMapReaderFactory: LocalCMapReader,
+      cMapUrl: cmapDir,
+      cMapPacked: true,
+      verbosity: 0,
+    }).promise;
+    let text = '';
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const tc = await page.getTextContent();
+      text += tc.items.map(i => i.str).join(' ') + '\n';
+    }
+    const clean = text.replace(/\s+/g, ' ').trim();
+    if (clean.length > 20) {
+      console.log(`✅ pdfjs: ${clean.length} chars`);
       return text;
     }
-    throw new Error('Empty text');
-  } catch (err) {
-    console.error('❌ pdf-parse failed:', err.message);
+    throw new Error('pdfjs empty');
+  } catch (e1) {
+    console.warn('⚠️ pdfjs failed:', e1.message);
+  }
+
+  // Method 2: pdf-parse
+  try {
+    const PDFParser = require('pdf-parse');
+    const data = await PDFParser(pdfBuffer);
+    const clean = (data.text || '').replace(/\s+/g, ' ').trim();
+    if (clean.length > 20) {
+      console.log(`✅ pdf-parse: ${clean.length} chars`);
+      return data.text;
+    }
+    throw new Error('pdf-parse empty');
+  } catch (e2) {
+    console.warn('⚠️ pdf-parse failed:', e2.message);
+  }
+
+  // Method 3: Raw binary
+  try {
+    const rawText = extractRaw(pdfBuffer);
+    if (rawText.length > 20) {
+      console.log(`✅ raw: ${rawText.length} chars`);
+      return rawText;
+    }
+    throw new Error('raw empty');
+  } catch (e3) {
+    console.error('❌ All methods failed:', e3.message);
     throw new Error('PDF se text extract nahi hua');
   }
 };
 
+const extractRaw = (buf) => {
+  const zlib = require('zlib');
+  let out = '', pos = 0;
+  while (pos < buf.length) {
+    let si = -1;
+    let searchPos = pos;
+    while (searchPos < buf.length) {
+      const idx = buf.indexOf('stream', searchPos);
+      if (idx === -1) break;
+      const before = buf.slice(Math.max(0, idx-3), idx).toString('ascii');
+      if (!before.includes('end')) { si = idx; break; }
+      searchPos = idx + 6;
+    }
+    if (si === -1) break;
+    let ds = si + 6;
+    if (buf[ds] === 0x0D) ds++;
+    if (buf[ds] === 0x0A) ds++;
+    const ei = buf.indexOf('endstream', ds);
+    if (ei === -1) break;
+    const raw = buf.slice(ds, ei);
+    let content = '';
+    try { content = zlib.inflateSync(raw).toString('latin1'); }
+    catch { try { content = zlib.inflateRawSync(raw).toString('latin1'); }
+    catch { content = raw.toString('latin1'); } }
+    const blocks = content.match(/BT[\s\S]*?ET/g) || [];
+    for (const block of blocks) {
+      for (const m of block.matchAll(/\(([^)]*)\)\s*(?:Tj|')/g)) out += m[1] + ' ';
+      for (const m of block.matchAll(/<([0-9A-Fa-f]{2,})>\s*(?:Tj|')/g)) {
+        const h = m[1];
+        if (h.length % 4 === 0) {
+          for (let i = 0; i < h.length; i += 4) {
+            const c = parseInt(h.slice(i, i+4), 16);
+            if (c > 31 && c < 0xFFFD) out += String.fromCodePoint(c);
+          }
+        } else {
+          for (let i = 0; i < h.length; i += 2) {
+            const c = parseInt(h.slice(i, i+2), 16);
+            if (c > 31) out += String.fromCharCode(c);
+          }
+        }
+        out += ' ';
+      }
+      for (const m of block.matchAll(/\[([^\]]*)\]\s*TJ/g)) {
+        for (const s of m[1].matchAll(/\(([^)]*)\)/g)) out += s[1];
+        for (const h of m[1].matchAll(/<([0-9A-Fa-f]{4,})>/g)) {
+          for (let i = 0; i < h[1].length; i += 4) {
+            const c = parseInt(h[1].slice(i, i+4), 16);
+            if (c > 31 && c < 0xFFFD) out += String.fromCodePoint(c);
+          }
+        }
+        out += ' ';
+      }
+    }
+    pos = ei + 9;
+  }
+  return out.trim();
+};
+
 // ════════════════════════════════════════════════════════════
-// SMART PARSER – दोनों लेआउट सपोर्ट करता है
+// बेहतर PARSER – अब 8 पार्ट्स और सही टैक्सेबल अमाउंट निकालेगा
 // ════════════════════════════════════════════════════════════
 function parseInvoiceFromText(text) {
   if (!text || typeof text !== 'string') {
-    console.error('Invalid text input');
+    console.error('Invalid text input to parser');
     return {};
   }
   
@@ -61,14 +181,14 @@ function parseInvoiceFromText(text) {
   if (clean.match(/Vehicle\s+Sale|New\s+Vehicle/i)) type = 'Vehicle';
   
   // ════════════════════════════════════════════════════════════
-  // 6. PARTS EXTRACTION – दो अलग-अलग तरीके
+  // 6. PARTS – दो तरीके: सिंपल टेबल और डिटेल्ड टेबल
   // ════════════════════════════════════════════════════════════
   const parts = [];
   
-  // Method A: सिंपल टेबल (Part No, Description, Qty, MRP, Taxable, GST%)
-  const simpleTableRegex = /^(\d+)\s+([A-Z0-9\-]+)\s+(.+?)\s+(\d+)\s+[₹]?([\d,]+(?:\.\d{2})?)\s+[₹]?([\d,]+(?:\.\d{2})?)\s+(\d+)%/gm;
+  // तरीका A: सिंपल टेबल (जैसे पहली PDF)
+  const simpleRegex = /^(\d+)\s+([A-Z0-9\-]+)\s+(.+?)\s+(\d+)\s+[₹]?([\d,]+(?:\.\d{2})?)\s+[₹]?([\d,]+(?:\.\d{2})?)\s+(\d+)%/gm;
   let match;
-  while ((match = simpleTableRegex.exec(clean)) !== null) {
+  while ((match = simpleRegex.exec(clean)) !== null) {
     parts.push({
       partNo: match[2],
       description: match[3].trim(),
@@ -79,44 +199,41 @@ function parseInvoiceFromText(text) {
     });
   }
   
-  // Method B: डिटेल्ड टेबल (Description, HSIN/SAC, Rate, Amount, GST%, ...)
-  // यहाँ "Amount" कॉलम taxable amount होता है
+  // तरीका B: डिटेल्ड टेबल (जैसे दूसरी PDF – जहाँ टैक्सेबल अमाउंट अलग कॉलम में है)
   if (parts.length === 0) {
-    // लाइन-बाय-लाइन पार्सिंग
+    // लाइन बाय लाइन पार्स करें
     const lines = text.split(/\r?\n/);
-    let inTable = false;
+    let inDetailTable = false;
     for (let line of lines) {
       line = line.trim();
       if (!line) continue;
-      // टेबल की शुरुआत
-      if (/Description\s+HSIN\/SAC|Parts\s+\/|\bSr\.\b/i.test(line)) {
-        inTable = true;
+      if (/Description\s+HSIN\/SAC|Sr\.|S\.No|Parts\/Items/i.test(line)) {
+        inDetailTable = true;
         continue;
       }
-      if (inTable && /Total|Tax|Grand|Payable|Invoice Value/i.test(line)) break;
-      if (inTable) {
-        // पैटर्न: Description, कोड, Rate, Amount, GST%, ...
+      if (inDetailTable && /Total|Subtotal|Tax|Grand|Payable|Invoice Value/i.test(line)) break;
+      if (inDetailTable) {
+        // पैटर्न: Description (शब्द) + कोड (संख्या) + Rate + Amount + GST...
         const tokens = line.split(/\s+/);
-        // कम से कम 5 टोकन होने चाहिए और दूसरा टोकन नंबर हो (HSIN/SAC)
-        if (tokens.length >= 5 && /^\d+$/.test(tokens[1])) {
+        if (tokens.length >= 4 && /^\d+$/.test(tokens[1])) {
           const description = tokens[0];
-          const hsin = tokens[1];
+          const hsinCode = tokens[1];
           const rate = parseFloat(tokens[2]);
-          const amount = parseFloat(tokens[3].replace(/,/g, ''));
-          let gst = 18; // default
-          // GST rate ढूंढो (अगर मौजूद है)
+          let amount = parseFloat(tokens[3].replace(/,/g, ''));
+          let gst = 18;
+          // GST ढूंढें (अगर मौजूद है)
           for (let i = 4; i < tokens.length; i++) {
-            if (tokens[i].includes('%') || tokens[i].match(/^\d+$/)) {
+            if (tokens[i].includes('%')) {
               gst = parseInt(tokens[i].replace('%', ''));
               break;
             }
           }
           parts.push({
-            partNo: hsin,        // HSIN code को partNo के रूप में
+            partNo: hsinCode,
             description: description,
-            quantity: 1,         // डिटेल्ड टेबल में qty अलग नहीं दिखता, मान लें 1
-            mrp: amount,         // यहाँ amount ही MRP (या taxable)
-            taxable: amount,
+            quantity: 1, // डिटेल्ड टेबल में qty साफ नहीं, मान लें 1
+            mrp: amount,
+            taxable: amount, // यहाँ amount ही टैक्सेबल है
             gst: gst
           });
         }
@@ -124,24 +241,8 @@ function parseInvoiceFromText(text) {
     }
   }
   
-  // अगर अभी भी कोई part नहीं मिला, तो CONSUMABLE जैसी लाइनों के लिए फॉलबैक
-  if (parts.length === 0) {
-    const fallbackRegex = /([A-Z0-9\-]+)\s+([A-Za-z\s]+?)\s+(\d+)\s+[₹]?([\d,]+(?:\.\d{2})?)/g;
-    let fMatch;
-    while ((fMatch = fallbackRegex.exec(clean)) !== null) {
-      parts.push({
-        partNo: fMatch[1],
-        description: fMatch[2].trim(),
-        quantity: parseInt(fMatch[3]),
-        mrp: parseFloat(fMatch[4].replace(/,/g, '')),
-        taxable: parseFloat(fMatch[4].replace(/,/g, '')),
-        gst: 18
-      });
-    }
-  }
-  
   // ════════════════════════════════════════════════════════════
-  // 7. TOTAL AMOUNT – पहले "Total Payable Amount" फिर "Grand Total"
+  // 7. TOTAL AMOUNT – प्राथमिकता से
   // ════════════════════════════════════════════════════════════
   let total = 0;
   let totalMatch = clean.match(/Total\s+Payable\s+Amount[:\s]*[₹]?([\d,]+(?:\.\d{2})?)/i);
@@ -150,7 +251,7 @@ function parseInvoiceFromText(text) {
   if (!totalMatch) totalMatch = clean.match(/Total[:\s]*[₹]?([\d,]+(?:\.\d{2})?)(?=\s|$)/i);
   if (totalMatch) total = parseFloat(totalMatch[1].replace(/,/g, ''));
   
-  // अगर total नहीं मिला तो parts से calculate करें
+  // अगर total नहीं मिला तो parts से कैलकुलेट करें
   if (total === 0 && parts.length) {
     total = parts.reduce((sum, p) => sum + (p.mrp * p.quantity), 0);
   }
@@ -168,7 +269,7 @@ function parseInvoiceFromText(text) {
 }
 
 // ════════════════════════════════════════════════════════════
-// ROUTES (आपके सभी पुराने routes ज्यों के त्यों)
+// ROUTES – आपके मूल routes (ज्यों के त्यों)
 // ════════════════════════════════════════════════════════════
 router.get('/', async (req, res) => {
   try { res.json(await Invoice.find().sort({ createdAt: -1 })); }
@@ -243,7 +344,7 @@ router.post('/sync', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ⭐ PDF PARSE ROUTE – अब सही डेटा देगा
+// ⭐ PDF PARSE ROUTE – अब structured data return करेगा
 router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No PDF uploaded' });
