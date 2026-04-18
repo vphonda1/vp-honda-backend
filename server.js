@@ -15,6 +15,7 @@ app.use(cors({
     'http://localhost:5000',
     'https://vp-honda-frontend.vercel.app',
     'https://vp-honda-frontend-*.vercel.app',
+    '*' // अभी टेस्ट के लिए, बाद में हटा देना
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -26,13 +27,15 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ════════════════════════════════════════════
-// MONGODB CONNECTION – FIXED VARIABLE NAME
+// MONGODB CONNECTION
 // ════════════════════════════════════════════
-// अब `MONGODB_URI` पढ़ेगा, जो .env और Render में है
-const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://username:password@cluster.mongodb.net/vp-honda';
+const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
+if (!mongoUri) {
+  console.error('❌ MongoDB URI not defined in environment variables');
+  process.exit(1);
+}
 
 mongoose.connect(mongoUri, {
-  // useNewUrlParser और useUnifiedTopology हटा दिए (deprecated)
   serverSelectionTimeoutMS: 5000,
   socketTimeoutMS: 45000,
 })
@@ -43,7 +46,7 @@ mongoose.connect(mongoUri, {
   });
 
 // ════════════════════════════════════════════
-// ROUTES (आपके जैसे ही)
+// ROUTES
 // ════════════════════════════════════════════
 app.get('/', (req, res) => {
   res.json({

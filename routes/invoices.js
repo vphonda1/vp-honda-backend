@@ -1,149 +1,41 @@
 const router = require('express').Router();
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
-const path = require('path');
-const fs = require('fs');
 const Invoice = require('../models/Invoice');
+const PDFParser = require('pdf2json');
 
 // ════════════════════════════════════════════════════════════
-// CUSTOM CMapReaderFactory (pdfjs-dist के लिए)
+// PDF TEXT EXTRACTION – pdf2json (काम करेगा Render पर)
 // ════════════════════════════════════════════════════════════
-class LocalCMapReader {
-  constructor({ baseUrl, isCompressed }) {
-    this._dir = baseUrl;
-    this._compressed = isCompressed;
-  }
-  async fetch({ name }) {
-    const file = path.join(this._dir, name + (this._compressed ? '.bcmap' : ''));
-    const data = fs.readFileSync(file);
-    return {
-      cMapData: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
-      compressionType: this._compressed ? 1 : 0,
-    };
-  }
-}
-
-// ════════════════════════════════════════════════════════════
-// PDF TEXT EXTRACTION – आपका मूल 3-मेथड फॉलबैक (काम करता है)
-// ════════════════════════════════════════════════════════════
-const extractTextFromPDF = async (pdfBuffer) => {
-  // Method 1: pdfjs-dist
-  try {
-    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
-    const pdfjsDir = path.dirname(require.resolve('pdfjs-dist/package.json'));
-    const cmapDir = path.join(pdfjsDir, 'cmaps');
-    const uint8 = new Uint8Array(pdfBuffer);
-    const pdf = await pdfjsLib.getDocument({
-      data: uint8,
-      CMapReaderFactory: LocalCMapReader,
-      cMapUrl: cmapDir,
-      cMapPacked: true,
-      verbosity: 0,
-    }).promise;
-    let text = '';
-    for (let p = 1; p <= pdf.numPages; p++) {
-      const page = await pdf.getPage(p);
-      const tc = await page.getTextContent();
-      text += tc.items.map(i => i.str).join(' ') + '\n';
-    }
-    const clean = text.replace(/\s+/g, ' ').trim();
-    if (clean.length > 20) {
-      console.log(`✅ pdfjs: ${clean.length} chars`);
-      return text;
-    }
-    throw new Error('pdfjs empty');
-  } catch (e1) {
-    console.warn('⚠️ pdfjs failed:', e1.message);
-  }
-
-  // Method 2: pdf-parse
-  try {
-    const PDFParser = require('pdf-parse');
-    const data = await PDFParser(pdfBuffer);
-    const clean = (data.text || '').replace(/\s+/g, ' ').trim();
-    if (clean.length > 20) {
-      console.log(`✅ pdf-parse: ${clean.length} chars`);
-      return data.text;
-    }
-    throw new Error('pdf-parse empty');
-  } catch (e2) {
-    console.warn('⚠️ pdf-parse failed:', e2.message);
-  }
-
-  // Method 3: Raw binary
-  try {
-    const rawText = extractRaw(pdfBuffer);
-    if (rawText.length > 20) {
-      console.log(`✅ raw: ${rawText.length} chars`);
-      return rawText;
-    }
-    throw new Error('raw empty');
-  } catch (e3) {
-    console.error('❌ All methods failed:', e3.message);
-    throw new Error('PDF se text extract nahi hua');
-  }
-};
-
-const extractRaw = (buf) => {
-  const zlib = require('zlib');
-  let out = '', pos = 0;
-  while (pos < buf.length) {
-    let si = -1;
-    let searchPos = pos;
-    while (searchPos < buf.length) {
-      const idx = buf.indexOf('stream', searchPos);
-      if (idx === -1) break;
-      const before = buf.slice(Math.max(0, idx-3), idx).toString('ascii');
-      if (!before.includes('end')) { si = idx; break; }
-      searchPos = idx + 6;
-    }
-    if (si === -1) break;
-    let ds = si + 6;
-    if (buf[ds] === 0x0D) ds++;
-    if (buf[ds] === 0x0A) ds++;
-    const ei = buf.indexOf('endstream', ds);
-    if (ei === -1) break;
-    const raw = buf.slice(ds, ei);
-    let content = '';
-    try { content = zlib.inflateSync(raw).toString('latin1'); }
-    catch { try { content = zlib.inflateRawSync(raw).toString('latin1'); }
-    catch { content = raw.toString('latin1'); } }
-    const blocks = content.match(/BT[\s\S]*?ET/g) || [];
-    for (const block of blocks) {
-      for (const m of block.matchAll(/\(([^)]*)\)\s*(?:Tj|')/g)) out += m[1] + ' ';
-      for (const m of block.matchAll(/<([0-9A-Fa-f]{2,})>\s*(?:Tj|')/g)) {
-        const h = m[1];
-        if (h.length % 4 === 0) {
-          for (let i = 0; i < h.length; i += 4) {
-            const c = parseInt(h.slice(i, i+4), 16);
-            if (c > 31 && c < 0xFFFD) out += String.fromCodePoint(c);
-          }
-        } else {
-          for (let i = 0; i < h.length; i += 2) {
-            const c = parseInt(h.slice(i, i+2), 16);
-            if (c > 31) out += String.fromCharCode(c);
-          }
+const extractTextFromPDF = (pdfBuffer) => {
+  return new Promise((resolve, reject) => {
+    const pdfParser = new PDFParser();
+    pdfParser.on('pdfParser_dataError', errData => {
+      console.error('pdf2json error:', errData.parserError);
+      reject(new Error('PDF parse failed: ' + errData.parserError));
+    });
+    pdfParser.on('pdfParser_dataReady', pdfData => {
+      let text = '';
+      for (const page of pdfData.Pages) {
+        for (const textItem of page.Texts) {
+          const decoded = decodeURIComponent(textItem.R[0].T);
+          text += decoded + ' ';
         }
-        out += ' ';
+        text += '\n';
       }
-      for (const m of block.matchAll(/\[([^\]]*)\]\s*TJ/g)) {
-        for (const s of m[1].matchAll(/\(([^)]*)\)/g)) out += s[1];
-        for (const h of m[1].matchAll(/<([0-9A-Fa-f]{4,})>/g)) {
-          for (let i = 0; i < h[1].length; i += 4) {
-            const c = parseInt(h[1].slice(i, i+4), 16);
-            if (c > 31 && c < 0xFFFD) out += String.fromCodePoint(c);
-          }
-        }
-        out += ' ';
+      if (text.trim().length > 20) {
+        console.log(`✅ pdf2json: ${text.length} chars extracted`);
+        resolve(text);
+      } else {
+        reject(new Error('No text found in PDF'));
       }
-    }
-    pos = ei + 9;
-  }
-  return out.trim();
+    });
+    pdfParser.parseBuffer(pdfBuffer);
+  });
 };
 
 // ════════════════════════════════════════════════════════════
-// बेहतर PARSER – अब 8 पार्ट्स और सही टैक्सेबल अमाउंट निकालेगा
+// INVOICE DATA PARSER – सारे parts और सही total निकालेगा
 // ════════════════════════════════════════════════════════════
 function parseInvoiceFromText(text) {
   if (!text || typeof text !== 'string') {
@@ -151,7 +43,6 @@ function parseInvoiceFromText(text) {
     return {};
   }
   
-  // Normalize
   const clean = text.replace(/\r\n/g, '\n').replace(/\s+/g, ' ').trim();
   
   // 1. Invoice Number
@@ -180,12 +71,10 @@ function parseInvoiceFromText(text) {
   let type = 'Service';
   if (clean.match(/Vehicle\s+Sale|New\s+Vehicle/i)) type = 'Vehicle';
   
-  // ════════════════════════════════════════════════════════════
-  // 6. PARTS – दो तरीके: सिंपल टेबल और डिटेल्ड टेबल
-  // ════════════════════════════════════════════════════════════
+  // 6. PARTS – दो तरीके
   const parts = [];
   
-  // तरीका A: सिंपल टेबल (जैसे पहली PDF)
+  // Method A: Simple table (Part No, Description, Qty, MRP, Taxable, GST%)
   const simpleRegex = /^(\d+)\s+([A-Z0-9\-]+)\s+(.+?)\s+(\d+)\s+[₹]?([\d,]+(?:\.\d{2})?)\s+[₹]?([\d,]+(?:\.\d{2})?)\s+(\d+)%/gm;
   let match;
   while ((match = simpleRegex.exec(clean)) !== null) {
@@ -199,21 +88,19 @@ function parseInvoiceFromText(text) {
     });
   }
   
-  // तरीका B: डिटेल्ड टेबल (जैसे दूसरी PDF – जहाँ टैक्सेबल अमाउंट अलग कॉलम में है)
+  // Method B: Detailed table (Description, HSIN/SAC, Rate, Amount, GST...)
   if (parts.length === 0) {
-    // लाइन बाय लाइन पार्स करें
     const lines = text.split(/\r?\n/);
-    let inDetailTable = false;
+    let inDetail = false;
     for (let line of lines) {
       line = line.trim();
       if (!line) continue;
       if (/Description\s+HSIN\/SAC|Sr\.|S\.No|Parts\/Items/i.test(line)) {
-        inDetailTable = true;
+        inDetail = true;
         continue;
       }
-      if (inDetailTable && /Total|Subtotal|Tax|Grand|Payable|Invoice Value/i.test(line)) break;
-      if (inDetailTable) {
-        // पैटर्न: Description (शब्द) + कोड (संख्या) + Rate + Amount + GST...
+      if (inDetail && /Total|Subtotal|Tax|Grand|Payable|Invoice Value/i.test(line)) break;
+      if (inDetail) {
         const tokens = line.split(/\s+/);
         if (tokens.length >= 4 && /^\d+$/.test(tokens[1])) {
           const description = tokens[0];
@@ -221,7 +108,6 @@ function parseInvoiceFromText(text) {
           const rate = parseFloat(tokens[2]);
           let amount = parseFloat(tokens[3].replace(/,/g, ''));
           let gst = 18;
-          // GST ढूंढें (अगर मौजूद है)
           for (let i = 4; i < tokens.length; i++) {
             if (tokens[i].includes('%')) {
               gst = parseInt(tokens[i].replace('%', ''));
@@ -231,9 +117,9 @@ function parseInvoiceFromText(text) {
           parts.push({
             partNo: hsinCode,
             description: description,
-            quantity: 1, // डिटेल्ड टेबल में qty साफ नहीं, मान लें 1
+            quantity: 1,
             mrp: amount,
-            taxable: amount, // यहाँ amount ही टैक्सेबल है
+            taxable: amount,
             gst: gst
           });
         }
@@ -241,17 +127,13 @@ function parseInvoiceFromText(text) {
     }
   }
   
-  // ════════════════════════════════════════════════════════════
-  // 7. TOTAL AMOUNT – प्राथमिकता से
-  // ════════════════════════════════════════════════════════════
+  // 7. TOTAL AMOUNT
   let total = 0;
   let totalMatch = clean.match(/Total\s+Payable\s+Amount[:\s]*[₹]?([\d,]+(?:\.\d{2})?)/i);
   if (!totalMatch) totalMatch = clean.match(/Invoice Value\s*\(in Figure\)[:\s]*[₹]?([\d,]+(?:\.\d{2})?)/i);
   if (!totalMatch) totalMatch = clean.match(/Grand\s+Total[:\s]*[₹]?([\d,]+(?:\.\d{2})?)/i);
   if (!totalMatch) totalMatch = clean.match(/Total[:\s]*[₹]?([\d,]+(?:\.\d{2})?)(?=\s|$)/i);
   if (totalMatch) total = parseFloat(totalMatch[1].replace(/,/g, ''));
-  
-  // अगर total नहीं मिला तो parts से कैलकुलेट करें
   if (total === 0 && parts.length) {
     total = parts.reduce((sum, p) => sum + (p.mrp * p.quantity), 0);
   }
@@ -269,11 +151,15 @@ function parseInvoiceFromText(text) {
 }
 
 // ════════════════════════════════════════════════════════════
-// ROUTES – आपके मूल routes (ज्यों के त्यों)
+// ROUTES – CRUD Operations
 // ════════════════════════════════════════════════════════════
 router.get('/', async (req, res) => {
-  try { res.json(await Invoice.find().sort({ createdAt: -1 })); }
-  catch (err) { res.status(500).json({ error: err.message }); }
+  try {
+    const invoices = await Invoice.find().sort({ createdAt: -1 });
+    res.json(invoices);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.get('/:id', async (req, res) => {
@@ -283,12 +169,15 @@ router.get('/:id', async (req, res) => {
     if (!inv) inv = await Invoice.findOne({ invoiceNumber: req.params.id });
     if (!inv) return res.status(404).json({ error: 'Not found' });
     res.json(inv);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.post('/', async (req, res) => {
   try {
-    const body = req.body, invNo = body.invoiceNumber;
+    const body = req.body;
+    const invNo = body.invoiceNumber;
     let inv;
     if (invNo) {
       inv = await Invoice.findOneAndUpdate(
@@ -296,21 +185,29 @@ router.post('/', async (req, res) => {
         { $set: body },
         { upsert: true, new: true, setDefaultsOnInsert: true }
       );
-    } else { inv = await Invoice.create(body); }
+    } else {
+      inv = await Invoice.create(body);
+    }
     res.status(201).json(inv);
-  } catch (err) { res.status(400).json({ error: err.message }); }
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 router.put('/:id', async (req, res) => {
   try {
     let inv = null;
-    if (req.params.id.match(/^[0-9a-fA-F]{24}$/))
+    if (req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
       inv = await Invoice.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!inv)
+    }
+    if (!inv) {
       inv = await Invoice.findOneAndUpdate({ invoiceNumber: req.params.id }, req.body, { new: true });
+    }
     if (!inv) return res.status(404).json({ error: 'Not found' });
     res.json(inv);
-  } catch (err) { res.status(400).json({ error: err.message }); }
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 router.delete('/:id', async (req, res) => {
@@ -320,7 +217,9 @@ router.delete('/:id', async (req, res) => {
     if (!inv) inv = await Invoice.findOneAndDelete({ invoiceNumber: req.params.id });
     if (!inv) return res.status(404).json({ error: 'Not found' });
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.post('/clear', async (req, res) => {
@@ -331,7 +230,9 @@ router.post('/clear', async (req, res) => {
     else if (type === 'service') result = await Invoice.deleteMany({ invoiceType: 'service' });
     else result = await Invoice.deleteMany({});
     res.json({ success: true, deleted: result.deletedCount });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.post('/sync', async (req, res) => {
@@ -341,19 +242,21 @@ router.post('/sync', async (req, res) => {
     await Invoice.deleteMany({});
     if (list.length > 0) await Invoice.insertMany(list);
     res.json({ success: true, count: list.length });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// ⭐ PDF PARSE ROUTE – अब structured data return करेगा
+// ⭐ PDF PARSE ROUTE – अब पूरी तरह काम करेगा
 router.post('/parse-pdf', upload.single('pdf'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No PDF uploaded' });
-    console.log(`\n📄 Processing: ${req.file.originalname}`);
+    console.log(`\n📄 Processing: ${req.file.originalname} (${req.file.size} bytes)`);
     const rawText = await extractTextFromPDF(req.file.buffer);
     const invoiceData = parseInvoiceFromText(rawText);
     res.json({ success: true, data: invoiceData, filename: req.file.originalname });
   } catch (err) {
-    console.error('Parse error:', err.message);
+    console.error('❌ parse-pdf error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
