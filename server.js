@@ -31,6 +31,7 @@ app.use('/api/staff', require('./routes/staff'));
 app.use('/api/oldbikes', require('./routes/oldbikes'));
 app.use('/api/quotations', require('./routes/quotations'));
 app.use('/api', require('./routes/dataImport'));
+app.use('/api/follow-ups', require('./routes/followups'));
 
 app.use((req, res) => { res.status(404).json({ error: 'Route not found' }); });
 app.use((err, req, res, next) => { console.error('Error:', err); res.status(500).json({ error: err.message }); });
