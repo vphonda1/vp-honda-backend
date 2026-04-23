@@ -59,3 +59,16 @@ router.put('/:regNo', async (req, res) => {
 });
 
 module.exports = router;
+
+// DELETE single record by regNo or customerId (called by DiagnosticPage Auto-Fix)
+router.delete('/:key', async (req, res) => {
+  try {
+    const result = await ServiceData.deleteOne({
+      $or: [
+        { regNo: req.params.key },
+        { customerId: req.params.key },
+      ]
+    });
+    res.json({ success: true, deleted: result.deletedCount });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
