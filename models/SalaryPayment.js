@@ -15,6 +15,7 @@ const salaryPaymentSchema = new mongoose.Schema({
   notes:         { type: String, default: '' },
   paidBy:        { type: String, default: 'Admin' },
   cancelled:     { type: Boolean, default: false },
+  seeded:        { type: Boolean, default: false },       // true if imported from Excel seed
 }, { timestamps: true });
 
 salaryPaymentSchema.index({ staffId: 1, forYear: -1, forMonth: -1 });
