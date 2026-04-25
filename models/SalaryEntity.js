@@ -10,6 +10,7 @@ const salaryEntitySchema = new mongoose.Schema({
   active:        { type: Boolean, default: true },
   replacedBy:    { type: String, default: null },                              // name of next entity
   replaces:      { type: String, default: null },                              // name of previous entity
+  photo:         { type: String, default: '' },                                // base64 image or URL
   notes:         { type: String, default: '' },
 }, { timestamps: true });
 

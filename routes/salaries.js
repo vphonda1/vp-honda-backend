@@ -1,4 +1,5 @@
 // routes/salaries.js — Staff salary, advance, bonus tracking
+// IMPORTANT: Specific routes (/summary/:staffId, /overview) MUST come before /:id
 const router = require('express').Router();
 const SalaryPayment = require('../models/SalaryPayment');
 const mongoose = require('mongoose');
@@ -8,7 +9,6 @@ let Staff;
 try { Staff = mongoose.model('Staff'); } catch {}
 
 // ── GET all payments (or filter) ─────────────────────────────────────────────
-// Query: ?staffId=&type=&forMonth=&forYear=&from=YYYY-MM-DD&to=YYYY-MM-DD
 router.get('/', async (req, res) => {
   try {
     const q = { cancelled: { $ne: true } };
@@ -26,42 +26,35 @@ router.get('/', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── POST new payment ─────────────────────────────────────────────────────────
-router.post('/', async (req, res) => {
-  try {
-    const body = { ...req.body };
-    if (!body.paymentDate) body.paymentDate = new Date().toISOString().split('T')[0];
-    if (!body.forMonth)    body.forMonth    = new Date().getMonth() + 1;
-    if (!body.forYear)     body.forYear     = new Date().getFullYear();
-    const p = await SalaryPayment.create(body);
-    res.status(201).json(p);
-  } catch (err) { res.status(400).json({ error: err.message }); }
-});
-
-// ── PUT update ───────────────────────────────────────────────────────────────
-router.put('/:id', async (req, res) => {
-  try {
-    const p = await SalaryPayment.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!p) return res.status(404).json({ error: 'Not found' });
-    res.json(p);
-  } catch (err) { res.status(400).json({ error: err.message }); }
-});
-
-// ── DELETE (soft via cancelled flag) ─────────────────────────────────────────
-router.delete('/:id', async (req, res) => {
-  try {
-    const p = await SalaryPayment.findByIdAndUpdate(req.params.id, { cancelled: true }, { new: true });
-    if (!p) return res.status(404).json({ error: 'Not found' });
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
 // ════════════════════════════════════════════════════════════════════════════
-// SUMMARY for a staff member
-// GET /api/salaries/summary/:staffId
-// Returns: { totalPaid, totalAdvance, totalBonus, totalIncentive,
-//            currentMonthPaid, advancePending, byMonth: [...] }
+// SPECIFIC ROUTES (must come before /:id to prevent collision)
 // ════════════════════════════════════════════════════════════════════════════
+
+// ── Overview of all staff salary status ──────────────────────────────────────
+router.get('/overview', async (req, res) => {
+  try {
+    const now = new Date();
+    const curMonth = now.getMonth() + 1;
+    const curYear = now.getFullYear();
+
+    const allPayments = await SalaryPayment.find({ cancelled: { $ne: true } }).lean();
+    const grouped = {};
+    allPayments.forEach(p => {
+      if (!grouped[p.staffId]) grouped[p.staffId] = { staffId: p.staffId, staffName: p.staffName, totalPaid: 0, totalAdvance: 0, currentMonthPaid: 0, lastPaymentDate: null };
+      const g = grouped[p.staffId];
+      const amt = Number(p.amount || 0);
+      if (p.type === 'salary')   g.totalPaid    += amt;
+      if (p.type === 'advance')  g.totalAdvance += amt;
+      if (p.type === 'salary' && p.forMonth === curMonth && p.forYear === curYear) g.currentMonthPaid += amt;
+      if (!g.lastPaymentDate || p.paymentDate > g.lastPaymentDate) g.lastPaymentDate = p.paymentDate;
+    });
+    res.json(Object.values(grouped));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── SUMMARY for a staff member ───────────────────────────────────────────────
 router.get('/summary/:staffId', async (req, res) => {
   try {
     const all = await SalaryPayment.find({ staffId: req.params.staffId, cancelled: { $ne: true } }).lean();
@@ -98,18 +91,12 @@ router.get('/summary/:staffId', async (req, res) => {
       } catch {}
     }
 
-    // Advance pending = total advances - (months elapsed × monthly salary - paid)
-    // Simpler: advancePending = total advance taken - total adjusted (we treat all advance as outstanding for now)
     const advancePending = totalAdvance - totalDeduction;
 
     res.json({
       staffId: req.params.staffId,
       monthlySalary,
-      totalPaid,
-      totalAdvance,
-      totalBonus,
-      totalIncentive,
-      totalDeduction,
+      totalPaid, totalAdvance, totalBonus, totalIncentive, totalDeduction,
       currentMonthPaid,
       currentMonthDue: Math.max(0, monthlySalary - currentMonthPaid),
       advancePending,
@@ -121,28 +108,38 @@ router.get('/summary/:staffId', async (req, res) => {
   }
 });
 
-// ── Overview of all staff salary status ──────────────────────────────────────
-router.get('/overview', async (req, res) => {
+// ── POST new payment ─────────────────────────────────────────────────────────
+router.post('/', async (req, res) => {
   try {
-    const now = new Date();
-    const curMonth = now.getMonth() + 1;
-    const curYear = now.getFullYear();
+    const body = { ...req.body };
+    if (!body.paymentDate) body.paymentDate = new Date().toISOString().split('T')[0];
+    if (!body.forMonth)    body.forMonth    = new Date().getMonth() + 1;
+    if (!body.forYear)     body.forYear     = new Date().getFullYear();
+    const p = await SalaryPayment.create(body);
+    res.status(201).json(p);
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
 
-    const allPayments = await SalaryPayment.find({ cancelled: { $ne: true } }).lean();
-    const grouped = {};
-    allPayments.forEach(p => {
-      if (!grouped[p.staffId]) grouped[p.staffId] = { staffId: p.staffId, staffName: p.staffName, totalPaid: 0, totalAdvance: 0, currentMonthPaid: 0, lastPaymentDate: null };
-      const g = grouped[p.staffId];
-      const amt = Number(p.amount || 0);
-      if (p.type === 'salary')   g.totalPaid    += amt;
-      if (p.type === 'advance')  g.totalAdvance += amt;
-      if (p.type === 'salary' && p.forMonth === curMonth && p.forYear === curYear) g.currentMonthPaid += amt;
-      if (!g.lastPaymentDate || p.paymentDate > g.lastPaymentDate) g.lastPaymentDate = p.paymentDate;
-    });
-    res.json(Object.values(grouped));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+// ════════════════════════════════════════════════════════════════════════════
+// PARAMETERIZED ROUTES — must come LAST
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── PUT update ───────────────────────────────────────────────────────────────
+router.put('/:id', async (req, res) => {
+  try {
+    const p = await SalaryPayment.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!p) return res.status(404).json({ error: 'Not found' });
+    res.json(p);
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+// ── DELETE (soft via cancelled flag) ─────────────────────────────────────────
+router.delete('/:id', async (req, res) => {
+  try {
+    const p = await SalaryPayment.findByIdAndUpdate(req.params.id, { cancelled: true }, { new: true });
+    if (!p) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 module.exports = router;

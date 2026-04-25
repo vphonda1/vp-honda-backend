@@ -44,6 +44,7 @@ app.use('/api/follow-ups',       require('./routes/followups'));
 // ⭐ NEW: Salary management
 app.use('/api/salaries',         require('./routes/salaries'));
 app.use('/api/salary-entities',  require('./routes/salaryEntities'));
+app.use('/api/attendance',       require('./routes/attendance'));
 
 app.use((req, res) => { res.status(404).json({ error: 'Route not found', path: req.path }); });
 app.use((err, req, res, next) => { console.error('Error:', err); res.status(500).json({ error: err.message }); });
