@@ -1,13 +1,14 @@
-// models/PushSubscription.js
+// models/PushSubscription.js — VP Honda Push Notification Subscriptions
 const mongoose = require('mongoose');
 
-const pushSubscriptionSchema = new mongoose.Schema({
+const PushSubscriptionSchema = new mongoose.Schema({
   endpoint: { type: String, required: true, unique: true },
   keys: {
-    p256dh: String,
-    auth: String
+    p256dh: { type: String },
+    auth:   { type: String },
   },
-  createdAt: { type: Date, default: Date.now }
+  userAgent: { type: String },
+  createdAt:  { type: Date, default: Date.now },
 });
 
-module.exports = mongoose.model('PushSubscription', pushSubscriptionSchema);
+module.exports = mongoose.model('PushSubscription', PushSubscriptionSchema);

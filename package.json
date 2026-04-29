@@ -1,7 +1,7 @@
 {
   "name": "vp-honda-backend",
-  "version": "1.0.0",
-  "description": "VP Honda Dealership Management — Backend API",
+  "version": "2.1.0",
+  "description": "VP Honda Dealership Management Backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -16,7 +16,6 @@
     "imagemagick": "^0.1.3",
     "mongoose": "^8.8.0",
     "multer": "^1.4.5-lts.1",
-    "node-fetch": "^3.3.2",
     "pdf-parse": "^2.4.5",
     "pdf-poppler": "^0.2.3",
     "pdf-to-img": "^6.0.0",
@@ -28,7 +27,7 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
+    "nodemon": "^3.0.0"
   },
   "engines": {
     "node": ">=18.0.0"

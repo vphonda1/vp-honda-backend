@@ -1,147 +1,132 @@
-// routes/messages.js — VP Honda Team Chat API (with Push Notifications)
-const express = require('express');
-const router = express.Router();
-const Message = require('../models/Message');
-const PushSubscription = require('../models/PushSubscription');
-const webpush = require('web-push');
+// routes/messages.js — VP Honda Team Chat (Push Notifications - All Bugs Fixed)
+const express  = require('express');
+const router   = express.Router();
+const Message  = require('../models/Message');
+const webpush  = require('web-push');
 
-// VAPID Keys (आपकी दी हुई keys)
-const vapidKeys = {
-  publicKey: 'BKwecIw_aOdebFYVONRm-ZF3au68bNWU1uHPSXkwr1LvV7dIS-b-v614SMT6UgjHbcqigskmSAhFBWHxV9a__TM',
-  privateKey: 'BphjFle5WwJGYAMWYMIF2bFT1BypFyCmT35JFXsGYYI'
-};
+const VAPID_PUBLIC_KEY  = 'BKwecIw_aOdebFYVONRm-ZF3au68bNWU1uHPSXkwr1LvV7dIS-b-v614SMT6UgjHbcqigskmSAhFBWHxV9a__TM';
+const VAPID_PRIVATE_KEY = 'BphjFle5WwJGYAMWYMIF2bFT1BypFyCmT35JFXsGYYI';
+webpush.setVapidDetails('mailto:admin@vphonda.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
-webpush.setVapidDetails(
-  'mailto:admin@vphonda.com',
-  vapidKeys.publicKey,
-  vapidKeys.privateKey
-);
+let PushSubscription;
+try { PushSubscription = require('../models/PushSubscription'); } catch { console.warn('[Messages] PushSubscription model missing'); }
 
-// ────────────── Helper: Send push to all subscribers ──────────────
-async function sendPushToAll(title, body, targetUrl) {
-  const subscriptions = await PushSubscription.find();
-  if (subscriptions.length === 0) return;
-
-  const payload = JSON.stringify({ title, body, url: targetUrl });
-  for (const sub of subscriptions) {
-    try {
-      await webpush.sendNotification(sub, payload);
-    } catch (err) {
-      if (err.statusCode === 410) {
-        // Subscription expired, remove from DB
-        await PushSubscription.deleteOne({ endpoint: sub.endpoint });
-      } else {
-        console.error('Push send error:', err);
+async function sendPushToAll(title, body, url) {
+  if (!PushSubscription) return;
+  try {
+    const subs    = await PushSubscription.find().lean();
+    if (!subs.length) return;
+    const payload = JSON.stringify({ title, body, url: url || '/chat', icon:'/icons/icon-192x192.png', badge:'/icons/icon-96x96.png' });
+    for (const sub of subs) {
+      try {
+        await webpush.sendNotification(sub, payload);
+      } catch (err) {
+        if (err.statusCode === 410 || err.statusCode === 404) {
+          await PushSubscription.deleteOne({ endpoint: sub.endpoint });
+        }
       }
     }
-  }
+  } catch (e) { console.error('[Push]', e.message); }
 }
 
-// ────────────── GET /api/messages/:room ──────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// ⚠️ SPECIFIC routes FIRST — before /:room wildcard
+// ══════════════════════════════════════════════════════════════════════════════
+
+// POST /api/messages/save-subscription — Save push subscription
+router.post('/save-subscription', async (req, res) => {
+  try {
+    if (!PushSubscription) return res.status(503).json({ error: 'Push not available' });
+    const sub = req.body;
+    if (!sub?.endpoint) return res.status(400).json({ error: 'Invalid subscription' });
+    await PushSubscription.findOneAndUpdate(
+      { endpoint: sub.endpoint },
+      { endpoint: sub.endpoint, keys: { p256dh: sub.keys?.p256dh, auth: sub.keys?.auth } },
+      { upsert: true, new: true }
+    );
+    res.status(201).json({ message: 'Saved ✅' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/messages/save-subscription — Remove subscription (disable notifs)
+router.delete('/save-subscription', async (req, res) => {
+  try {
+    if (PushSubscription && req.body?.endpoint) {
+      await PushSubscription.deleteOne({ endpoint: req.body.endpoint });
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/messages/vapid-public-key
+router.get('/vapid-public-key', (req, res) => res.json({ publicKey: VAPID_PUBLIC_KEY }));
+
+// POST /api/messages/send-push — Send push to ALL subscribers (for meeting invites)
+router.post('/send-push', async (req, res) => {
+  try {
+    const { title, body, url } = req.body;
+    if (!title) return res.status(400).json({ error: 'title required' });
+    await sendPushToAll(title, body || '', url || '/meeting');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// WILDCARD routes — after specific routes
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/messages/:room
 router.get('/:room', async (req, res) => {
   try {
     const { room } = req.params;
     const limit = parseInt(req.query.limit) || 100;
-    const since = req.query.since;
-
     const query = { room, deleted: { $ne: true } };
-    if (since) query.createdAt = { $gt: new Date(since) };
-
-    const messages = await Message.find(query)
-      .sort({ createdAt: 1 })
-      .limit(limit)
-      .lean();
-
+    if (req.query.after) query._id       = { $gt: req.query.after };
+    if (req.query.since) query.createdAt = { $gt: new Date(req.query.since) };
+    const messages = await Message.find(query).sort({ createdAt: 1 }).limit(limit).lean();
     res.json(messages);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ────────────── POST /api/messages/:room ──────────────
+// POST /api/messages/:room — Send message + push notification
 router.post('/:room', async (req, res) => {
   try {
     const { room } = req.params;
     const { sender, senderRole, text, photo, replyTo } = req.body;
-
-    if (!sender || (!text && !photo)) {
-      return res.status(400).json({ error: 'sender and text/photo required' });
-    }
-
+    if (!sender || (!text && !photo)) return res.status(400).json({ error: 'sender and text/photo required' });
     const msg = new Message({ room, sender, senderRole, text, photo, replyTo });
     await msg.save();
-
-    // ──────── PUSH NOTIFICATION (दूसरों को सूचित करें) ────────
-    // केवल तभी भेजें जब message में टेक्स्ट या फोटो हो
-    if (msg.text || msg.photo) {
-      const title = sender;
-      const body = msg.text ? msg.text : '📷 नई फोटो';
-      const targetUrl = 'https://vp-honda-frontend.vercel.app/team-chat'; // अपना फ्रंटएंड URL
-      // असिंक्रोनस रूप से भेजें, रिस्पॉन्स ब्लॉक न हो
-      sendPushToAll(title, body, targetUrl).catch(console.error);
+    // Send push (non-blocking)
+    if (text || photo) {
+      const roomLabel = room.startsWith('group_') ? `📢 ${room.replace('group_', '').toUpperCase()}` : '💬 Direct Message';
+      sendPushToAll(`${sender} — ${roomLabel}`, text || '📷 Photo भेजी', '/chat').catch(() => {});
     }
-
     res.json(msg);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ────────────── DELETE /api/messages/:room/:id ──────────────
+// DELETE /api/messages/:room/:id
 router.delete('/:room/:id', async (req, res) => {
   try {
     await Message.findByIdAndUpdate(req.params.id, { deleted: true });
     res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ────────────── GET unread count ──────────────
+// GET /api/messages/:room/unread/:user
 router.get('/:room/unread/:user', async (req, res) => {
   try {
-    const count = await Message.countDocuments({
-      room: req.params.room,
-      sender: { $ne: req.params.user },
-      readBy: { $nin: [req.params.user] },
-      deleted: { $ne: true },
-    });
+    const count = await Message.countDocuments({ room: req.params.room, sender: { $ne: req.params.user }, readBy: { $nin: [req.params.user] }, deleted: { $ne: true } });
     res.json({ count });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ────────────── PATCH mark as read ──────────────
+// PATCH /api/messages/:room/read/:user
 router.patch('/:room/read/:user', async (req, res) => {
   try {
-    await Message.updateMany(
-      { room: req.params.room, sender: { $ne: req.params.user }, readBy: { $nin: [req.params.user] } },
-      { $addToSet: { readBy: req.params.user } }
-    );
+    await Message.updateMany({ room: req.params.room, sender: { $ne: req.params.user }, readBy: { $nin: [req.params.user] } }, { $addToSet: { readBy: req.params.user } });
     res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ────────────── NEW: POST /api/save-push-subscription ──────────────
-// यह endpoint frontend से subscription save करने के लिए है
-router.post('/save-push-subscription', async (req, res) => {
-  try {
-    const subscription = req.body;
-    if (!subscription || !subscription.endpoint) {
-      return res.status(400).json({ error: 'Invalid subscription' });
-    }
-    // Check if already exists
-    const existing = await PushSubscription.findOne({ endpoint: subscription.endpoint });
-    if (!existing) {
-      await PushSubscription.create(subscription);
-    }
-    res.status(201).json({ message: 'Subscription saved' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 module.exports = router;
