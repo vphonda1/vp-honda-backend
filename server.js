@@ -3,6 +3,7 @@ const express  = require('express');
 const mongoose = require('mongoose');
 const cors     = require('cors');
 const path     = require('path');
+const pushRoutes     = require('routes/push');
 require('dotenv').config();
 
 
@@ -36,6 +37,7 @@ app.use('/api/quotations',       require('./routes/quotations'));
 app.use('/api',                  require('./routes/dataImport'));
 app.use('/api/service-data',     require('./routes/servicedata'));
 app.use('/api/follow-ups',       require('./routes/followups'));
+app.use('/api',      pushRoutes);
 
 // ─── New Smart Feature routes ─────────────────────────────────────────────────
 app.use('/api/attendance',       require('./routes/attendance'));      // GPS check-in
