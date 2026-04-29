@@ -10,6 +10,7 @@ webpush.setVapidDetails('mailto:admin@vphonda.com', VAPID_PUBLIC_KEY, VAPID_PRIV
 
 let subscriptions = [];
 
+// POST /api/save-push-subscription
 router.post('/save-push-subscription', (req, res) => {
   const sub = req.body;
   if (!sub || !sub.endpoint) return res.status(400).json({ error: 'Invalid' });
@@ -20,6 +21,7 @@ router.post('/save-push-subscription', (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/test-push-notification
 router.post('/test-push-notification', async (req, res) => {
   if (subscriptions.length === 0) return res.status(400).json({ error: 'No subscriptions' });
   const payload = JSON.stringify({ title: 'VP Honda', body: 'Test notification', url: '/reminders' });
@@ -32,7 +34,7 @@ router.post('/test-push-notification', async (req, res) => {
       if (err.statusCode === 410) subscriptions = subscriptions.filter(s => s.endpoint !== sub.endpoint);
     }
   }
-  res.json({ message: `Sent to ${count} devices` });
+  res.json({ message: `✅ ${count} notifications sent` });
 });
 
 module.exports = router;
