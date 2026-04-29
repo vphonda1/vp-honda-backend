@@ -37,7 +37,7 @@ app.use('/api/quotations',       require('./routes/quotations'));
 app.use('/api',                  require('./routes/dataImport'));
 app.use('/api/service-data',     require('./routes/servicedata'));
 app.use('/api/follow-ups',       require('./routes/followups'));
-app.use('/api/push',    require('./routes/push'));
+app.use('/api',    require('./routes/push'));
 
 // ─── New Smart Feature routes ─────────────────────────────────────────────────
 app.use('/api/attendance',       require('./routes/attendance'));      // GPS check-in
