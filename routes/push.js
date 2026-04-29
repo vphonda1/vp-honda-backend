@@ -1,28 +1,62 @@
-// routes/push.js – पूरी फ़ाइल (replace करें)
+// routes/push.js
 const express = require('express');
 const router = express.Router();
 const webpush = require('web-push');
 
-// आपकी VAPID keys
+// आपकी VAPID keys (जो आपने पहले जनरेट की थीं)
 const VAPID_PUBLIC_KEY = 'BKwecIw_aOdebFYVONRm-ZF3au68bNWU1uHPSXkwr1LvV7dIS-b-v614SMT6UgjHbcqigskmSAhFBWHxV9a__TM';
 const VAPID_PRIVATE_KEY = 'BphjFle5WwJGYAMWYMIF2bFT1BypFyCmT35JFXsGYYI';
 
-webpush.setVapidDetails('mailto:admin@vphonda.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+webpush.setVapidDetails(
+  'mailto:admin@vphonda.com',
+  VAPID_PUBLIC_KEY,
+  VAPID_PRIVATE_KEY
+);
 
 let subscriptions = [];
 
-// Endpoint to save subscription
+// ✅ सब्सक्रिप्शन सेव करने का एंडपॉइंट
 router.post('/save-push-subscription', (req, res) => {
   const sub = req.body;
-  if (!sub || !sub.endpoint) return res.status(400).json({ error: 'Invalid' });
-  if (!subscriptions.find(s => s.endpoint === sub.endpoint)) {
-    subscriptions.push(sub);
-    console.log('✅ Subscription saved, total:', subscriptions.length);
+  if (!sub || !sub.endpoint) {
+    return res.status(400).json({ error: 'Invalid subscription' });
   }
-  res.json({ ok: true });
+  const exists = subscriptions.find(s => s.endpoint === sub.endpoint);
+  if (!exists) {
+    subscriptions.push(sub);
+    console.log(`✅ Subscription saved. Total: ${subscriptions.length}`);
+  }
+  res.json({ success: true });
 });
 
-// ✅ NEW - Send immediate push for multiple reminders
+// ✅ टेस्ट नोटिफिकेशन भेजने का एंडपॉइंट
+router.post('/test-push-notification', async (req, res) => {
+  if (subscriptions.length === 0) {
+    return res.status(400).json({ error: 'No subscriptions. Click "Allow Notifications" first.' });
+  }
+  const payload = JSON.stringify({
+    title: '🔔 VP Honda Test',
+    body: 'यह आपके मोबाइल के नोटिफिकेशन बार में दिखना चाहिए!',
+    icon: '/icons/icon-192x192.png',
+    badge: '/icons/icon-96x96.png',
+    url: '/reminders',
+  });
+  let successCount = 0;
+  for (const sub of subscriptions) {
+    try {
+      await webpush.sendNotification(sub, payload);
+      successCount++;
+    } catch (err) {
+      if (err.statusCode === 410) {
+        subscriptions = subscriptions.filter(s => s.endpoint !== sub.endpoint);
+        console.log('Expired subscription removed');
+      }
+    }
+  }
+  res.json({ message: `✅ ${successCount} notification(s) sent` });
+});
+
+// ✅ तुरंत रिमाइंडर भेजने का एंडपॉइंट (RemindersPage से कॉल होगा)
 router.post('/send-immediate-reminders', async (req, res) => {
   const { reminders } = req.body;
   if (!reminders || reminders.length === 0) {
@@ -41,8 +75,7 @@ router.post('/send-immediate-reminders', async (req, res) => {
         icon: '/icons/icon-192x192.png',
         badge: '/icons/icon-96x96.png',
         url: r.url || '/reminders',
-        tag: r.tag,
-        vibrate: [200, 100, 200]
+        tag: r.tag || 'reminder',
       });
       try {
         await webpush.sendNotification(sub, payload);
@@ -54,23 +87,7 @@ router.post('/send-immediate-reminders', async (req, res) => {
       }
     }
   }
-  res.json({ message: `✅ Sent ${successCount} push notifications` });
-});
-
-// Test endpoint
-router.post('/test-push-notification', async (req, res) => {
-  if (subscriptions.length === 0) return res.status(400).json({ error: 'No subscriptions' });
-  const payload = JSON.stringify({ title: 'Test', body: 'Manual test', url: '/reminders' });
-  let count = 0;
-  for (let sub of subscriptions) {
-    try {
-      await webpush.sendNotification(sub, payload);
-      count++;
-    } catch (err) {
-      if (err.statusCode === 410) subscriptions = subscriptions.filter(s => s.endpoint !== sub.endpoint);
-    }
-  }
-  res.json({ message: `Sent to ${count} devices` });
+  res.json({ message: `✅ Sent ${successCount} immediate pushes` });
 });
 
 module.exports = router;
