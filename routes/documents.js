@@ -24,7 +24,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// DELETE document by id
+// DELETE /api/documents/:id
 router.delete('/:id', async (req, res) => {
   try {
     await Document.findByIdAndDelete(req.params.id);
