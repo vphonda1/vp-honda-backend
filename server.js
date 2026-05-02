@@ -44,40 +44,48 @@ app.use('/api/salaries', require('./routes/salaries'));
 app.use('/api/salary-entities', require('./routes/salaryEntities'));
 app.use('/api/messages', require('./routes/messages'));
 
-// ====================== BAILEYS WHATSAPP ======================
+// ====================== BAILEYS WHATSAPP (Improved) ======================
 let qrCodeDataURL = null;
 let isConnected = false;
 let sock = null;
 
 const startWhatsApp = async () => {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+    try {
+        const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
 
-    sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: false,
-        logger: require('pino')({ level: 'silent' })
-    });
+        sock = makeWASocket({
+            auth: state,
+            printQRInTerminal: true,   // Extra logging
+            logger: require('pino')({ level: 'silent' }),
+            markOnlineOnConnect: false
+        });
 
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
 
-        if (qr) {
-            qrCodeDataURL = await QRCode.toDataURL(qr, { width: 320 });
-            console.log('✅ QR Code Generated - Ready at /api/qr');
-        }
+            if (qr) {
+                console.log("🔥 QR CODE RECEIVED!");
+                qrCodeDataURL = await QRCode.toDataURL(qr, { width: 320 });
+                console.log("✅ QR Code Generated - Ready at /api/qr");
+            }
 
-        if (connection === 'open') {
-            isConnected = true;
-            console.log('🎉 WhatsApp Connected Successfully!');
-        }
+            if (connection === 'open') {
+                isConnected = true;
+                console.log("🎉 WhatsApp Connected Successfully!");
+            }
 
-        if (connection === 'close') {
-            console.log('Connection closed, reconnecting...');
-            setTimeout(startWhatsApp, 5000);
-        }
-    });
+            if (connection === 'close') {
+                console.log("Connection closed, reconnecting in 5s...");
+                setTimeout(startWhatsApp, 5000);
+            }
+        });
 
-    sock.ev.on('creds.update', saveCreds);
+        sock.ev.on('creds.update', saveCreds);
+        console.log("✅ Baileys Socket Initialized");
+
+    } catch (err) {
+        console.error("Baileys Error:", err.message);
+    }
 };
 
 startWhatsApp();
