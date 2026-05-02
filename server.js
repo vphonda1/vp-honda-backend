@@ -64,46 +64,45 @@ let isWhatsAppReady = false;
 
 const startWhatsApp = async () => {
     try {
-        console.log("🚀 Initializing WhatsApp...");
+        console.log("🚀 Starting WhatsApp Client...");
 
         const client = new Client({
             authStrategy: new LocalAuth({ clientId: "vp-honda" }),
             puppeteer: {
                 headless: true,
+                executablePath: '/opt/render/.cache/puppeteer/chrome/linux-131.0.6778.264/chrome-linux64/chrome',
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
                     '--disable-gpu',
                     '--no-first-run',
-                    '--no-zygote'
+                    '--no-zygote',
+                    '--single-process'
                 ],
-                timeout: 60000
+                timeout: 0,
+                defaultViewport: null
             }
         });
 
         client.on('qr', async (qr) => {
-            qrImageDataURL = await QRCode.toDataURL(qr, { width: 320, margin: 2 });
-            console.log('✅ QR Code Generated - Ready at /api/qr');
+            qrImageDataURL = await QRCode.toDataURL(qr, { width: 320 });
+            console.log('✅ QR Code Generated Successfully!');
         });
 
         client.on('ready', () => {
             isWhatsAppReady = true;
-            console.log('✅ WhatsApp Web Connected Successfully!');
+            console.log('🎉 WhatsApp Web is Ready!');
         });
 
-        client.on('authenticated', () => console.log('✅ WhatsApp Authenticated'));
-        client.on('disconnected', () => console.log('❌ WhatsApp Disconnected'));
-
-        await client.initialize();
-        console.log("✅ WhatsApp Client Started");
+        client.on('authenticated', () => console.log('✅ Authenticated'));
+        client.initialize();
 
     } catch (err) {
         console.error("❌ WhatsApp Error:", err.message);
     }
 };
 
-// Call the function
 startWhatsApp();
 
 // QR Route
