@@ -58,13 +58,13 @@ app.get('/api/debug-routes', (req, res) => {
     });
 });
 
-// ====================== WHATSAPP AUTOMATION ======================
+// ====================== WHATSAPP (No Hardcoded Path) ======================
 let qrImageDataURL = null;
 let isWhatsAppReady = false;
 
 const startWhatsApp = async () => {
     try {
-        console.log("🚀 Starting WhatsApp Client...");
+        console.log("🚀 Starting WhatsApp...");
 
         const client = new Client({
             authStrategy: new LocalAuth({ clientId: "vp-honda" }),
@@ -74,35 +74,25 @@ const startWhatsApp = async () => {
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
-                    '--disable-gpu',
-                    '--no-first-run',
-                    '--no-zygote',
-                    '--single-process',
-                    '--disable-extensions'
-                ],
-                timeout: 0,
-                defaultViewport: null,
-                // executablePath हटा दिया — Puppeteer खुद ढूंढेगा
+                    '--disable-gpu'
+                ]
             }
         });
 
         client.on('qr', async (qr) => {
             qrImageDataURL = await QRCode.toDataURL(qr, { width: 320 });
-            console.log('✅ QR Code Generated Successfully!');
+            console.log('✅ QR GENERATED SUCCESSFULLY');
         });
 
         client.on('ready', () => {
             isWhatsAppReady = true;
-            console.log('🎉 WhatsApp Web is Ready & Connected!');
+            console.log('🎉 WHATSAPP CONNECTED!');
         });
-
-        client.on('authenticated', () => console.log('✅ Authenticated'));
-        client.on('disconnected', () => console.log('❌ Disconnected'));
 
         await client.initialize();
 
     } catch (err) {
-        console.error("❌ WhatsApp Error:", err.message);
+        console.error("WhatsApp Error:", err.message);
     }
 };
 

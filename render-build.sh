@@ -5,10 +5,6 @@ echo "📦 Installing dependencies..."
 npm install
 
 echo "🌐 Installing Chrome..."
-npx puppeteer browsers install chrome@131
+npx puppeteer browsers install chrome
 
-echo "🔧 Fixing permissions..."
-mkdir -p /opt/render/.cache/puppeteer
-chmod -R 755 /opt/render/.cache/puppeteer 2>/dev/null || true
-
-echo "✅ Build completed successfully"
+echo "✅ Build completed"
