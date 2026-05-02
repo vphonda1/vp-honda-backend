@@ -23,7 +23,7 @@ mongoose.connect(mongoUri)
 
 app.get('/', (req, res) => res.json({ status: 'ok' }));
 
-// ----- सभी पुराने रूट्स (बिल्कुल सुरक्षित) -----
+// ----- YOUR EXISTING ROUTES (unchanged) -----
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/parts', require('./routes/parts'));
 app.use('/api/invoices', require('./routes/invoices'));
@@ -43,7 +43,7 @@ app.use('/api/salaries', require('./routes/salaries'));
 app.use('/api/salary-entities', require('./routes/salaryEntities'));
 app.use('/api/messages', require('./routes/messages'));
 
-// ----- WhatsApp Client Setup -----
+// ----- WhatsApp Client -----
 let chromePath = null;
 const possiblePaths = [
     '/opt/render/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome',
@@ -67,30 +67,21 @@ const waClient = new Client({
 let qrImageDataURL = null;
 waClient.on('qr', async (qr) => {
     qrImageDataURL = await QRCode.toDataURL(qr, { width: 250 });
-    console.log('✅ QR code generated. Visit /api/qr');
+    console.log('✅ QR ready at /api/qr');
 });
-waClient.on('ready', () => console.log('✅ WhatsApp client is ready!'));
+waClient.on('ready', () => console.log('✅ WhatsApp ready'));
 waClient.initialize();
 
-// ----- QR इमेज endpoint (मोबाइल से स्कैन करने लायक) -----
+// ----- QR ROUTE (MUST BE BEFORE 404) -----
 app.get('/api/qr', (req, res) => {
-    if (!qrImageDataURL) {
-        return res.status(404).send('QR not ready yet. Please wait 10 seconds and refresh.');
-    }
-    res.send(`
-        <html>
-            <head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
-            <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#111;">
-                <img src="${qrImageDataURL}" style="width:250px;height:auto;border-radius:12px;box-shadow:0 0 20px #00a884;">
-            </body>
-        </html>
-    `);
+    if (!qrImageDataURL) return res.status(404).send('QR not ready, wait 10s');
+    res.send(`<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#000;"><img src="${qrImageDataURL}" style="width:250px;border-radius:12px;"></body></html>`);
 });
 
-// ----- WhatsApp send endpoint (multi‑file) -----
+// ----- WhatsApp send endpoint -----
 app.post('/api/send-whatsapp-multi', upload.array('files'), async (req, res) => {
     const { phoneNumber, caption } = req.body;
-    if (!phoneNumber) return res.status(400).json({ error: 'Phone number missing' });
+    if (!phoneNumber) return res.status(400).json({ error: 'Phone missing' });
     const chatId = phoneNumber.includes('@c.us') ? phoneNumber : `${phoneNumber}@c.us`;
     try {
         await waClient.sendMessage(chatId, caption);
@@ -105,8 +96,8 @@ app.post('/api/send-whatsapp-multi', upload.array('files'), async (req, res) => 
     }
 });
 
-// ----- 404 handler – सबसे नीचे रखना जरूरी -----
+// ----- 404 handler (keep at the end) -----
 app.use((req, res) => res.status(404).json({ error: 'Route not found', path: req.path }));
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`✅ VP Honda API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ API running on port ${PORT}`));
