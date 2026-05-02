@@ -1,11 +1,10 @@
-// server.js – Working QR endpoint + all your existing routes
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const multer = require('multer');
 const fs = require('fs');
-const QRCode = require('qrcode');
+const qrcode = require('qrcode-terminal');
 
 require('dotenv').config();
 
@@ -15,17 +14,16 @@ const upload = multer({ storage: multer.memoryStorage() });
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// MongoDB connection
+// MongoDB
 const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
 if (!mongoUri) { console.error('MongoDB URI missing'); process.exit(1); }
 mongoose.connect(mongoUri)
     .then(() => console.log('✅ MongoDB Connected'))
     .catch(err => console.error(err));
 
-// Simple status
 app.get('/', (req, res) => res.json({ status: 'ok' }));
 
-// ----- YOUR EXISTING ROUTES (all untouched) -----
+// ------ YOUR EXISTING ROUTES (unchanged) ------
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/parts', require('./routes/parts'));
 app.use('/api/invoices', require('./routes/invoices'));
@@ -45,43 +43,38 @@ app.use('/api/salaries', require('./routes/salaries'));
 app.use('/api/salary-entities', require('./routes/salaryEntities'));
 app.use('/api/messages', require('./routes/messages'));
 
-// ----- WhatsApp Client Setup -----
+// ------ WhatsApp Client (with QR printed in logs) ------
 let chromePath = null;
-const possible = ['/opt/render/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome'];
-for (const p of possible) if (fs.existsSync(p)) { chromePath = p; break; }
-console.log(chromePath ? `✅ Chrome at ${chromePath}` : '⚠️ Chrome not found');
+const possiblePaths = [
+    '/opt/render/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome',
+    '/opt/render/.cache/puppeteer/chrome/linux-133.0.6943.126/chrome-linux64/chrome'
+];
+for (const p of possiblePaths) {
+    if (fs.existsSync(p)) { chromePath = p; break; }
+}
+if (!chromePath) console.warn('⚠️ Chrome not found, WhatsApp may fail');
+else console.log(`✅ Chrome found at: ${chromePath}`);
 
 const waClient = new Client({
     authStrategy: new LocalAuth(),
-    puppeteer: { headless: true, args: ['--no-sandbox'], executablePath: chromePath || undefined }
+    puppeteer: {
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        executablePath: chromePath || undefined
+    }
 });
 
-// Store QR as base64 image
-waClient.on('qr', async (qr) => {
-    const qrImage = await QRCode.toDataURL(qr);
-    app.locals.qrCode = qrImage;
-    console.log('✅ QR code generated. Visit /api/qr');
+// ----- यही वह जादू है – QR कोड सीधे logs में छपेगा -----
+waClient.on('qr', (qr) => {
+    console.log('\n🔐 ========== SCAN THIS QR CODE WITH WHATSAPP ==========\n');
+    qrcode.generate(qr, { small: false });  // false = बड़ा, साफ QR
+    console.log('\n=====================================================\n');
 });
-waClient.on('ready', () => console.log('✅ WhatsApp ready'));
+
+waClient.on('ready', () => console.log('✅ WhatsApp client is ready!'));
 waClient.initialize();
 
-// ----- QR ROUTE (must be BEFORE any 404 handler) -----
-app.get('/api/qr', (req, res) => {
-    if (!app.locals.qrCode) {
-        return res.status(404).send('QR not ready yet. Wait 10 seconds and refresh.');
-    }
-    res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
-        <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0">
-            <img src="${app.locals.qrCode}" style="width:320px; height:auto;"/>
-        </body>
-        </html>
-    `);
-});
-
-// ----- WhatsApp multi‑file send endpoint -----
+// WhatsApp send endpoint (same as before)
 app.post('/api/send-whatsapp-multi', upload.array('files'), async (req, res) => {
     const { phoneNumber, caption } = req.body;
     if (!phoneNumber) return res.status(400).json({ error: 'Phone number missing' });
@@ -99,8 +92,8 @@ app.post('/api/send-whatsapp-multi', upload.array('files'), async (req, res) => 
     }
 });
 
-// ----- 404 Handler (keep at the very end) -----
+// 404 handler (must be at the end)
 app.use((req, res) => res.status(404).json({ error: 'Route not found', path: req.path }));
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`✅ API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ VP Honda API running on port ${PORT}`));
