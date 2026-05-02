@@ -70,7 +70,6 @@ const startWhatsApp = async () => {
             authStrategy: new LocalAuth({ clientId: "vp-honda" }),
             puppeteer: {
                 headless: true,
-                executablePath: '/opt/render/.cache/puppeteer/chrome/linux-131.0.6778.264/chrome-linux64/chrome',
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
@@ -78,10 +77,12 @@ const startWhatsApp = async () => {
                     '--disable-gpu',
                     '--no-first-run',
                     '--no-zygote',
-                    '--single-process'
+                    '--single-process',
+                    '--disable-extensions'
                 ],
                 timeout: 0,
-                defaultViewport: null
+                defaultViewport: null,
+                // executablePath हटा दिया — Puppeteer खुद ढूंढेगा
             }
         });
 
@@ -92,11 +93,13 @@ const startWhatsApp = async () => {
 
         client.on('ready', () => {
             isWhatsAppReady = true;
-            console.log('🎉 WhatsApp Web is Ready!');
+            console.log('🎉 WhatsApp Web is Ready & Connected!');
         });
 
         client.on('authenticated', () => console.log('✅ Authenticated'));
-        client.initialize();
+        client.on('disconnected', () => console.log('❌ Disconnected'));
+
+        await client.initialize();
 
     } catch (err) {
         console.error("❌ WhatsApp Error:", err.message);
