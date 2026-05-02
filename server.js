@@ -68,12 +68,35 @@ for (const p of possiblePaths) {
 }
 if (!chromePath) console.warn('⚠️ Chrome not found, WhatsApp client may fail');
 
+// --- Render पर Chrome का सही पाथ ढूँढें ---
+const fs = require('fs');
+let chromePath = null;
+const possiblePaths = [
+    '/opt/render/.cache/puppeteer/chrome/linux-133.0.6943.126/chrome-linux64/chrome',
+    '/opt/render/project/src/.cache/puppeteer/chrome/linux-133.0.6943.126/chrome-linux64/chrome',
+    '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome',
+    '/opt/render/project/src/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome'
+];
+for (const pathPattern of possiblePaths) {
+    if (pathPattern.includes('*')) {
+        const glob = require('glob');
+        const matches = glob.sync(pathPattern);
+        if (matches.length > 0) { chromePath = matches[0]; break; }
+    } else if (fs.existsSync(pathPattern)) {
+        chromePath = pathPattern; break;
+    }
+}
+if (chromePath) console.log(`✅ Chrome will use: ${chromePath}`);
+else console.warn('⚠ Chrome not found, WhatsApp client may fail');
+
+// फिर waClient बनाएँ (नीचे पहले से लिखा है, बस executablePath जोड़ें)
+
 const waClient = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-        executablePath: chromePath || undefined
+        executablePath: chromePath || undefined   // यह लाइन जोड़ें
     }
 });
 
