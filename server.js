@@ -1,4 +1,4 @@
-// VP Honda Backend — server.js (QR as image for easy scanning)
+// VP Honda Backend — server.js (Working QR endpoint)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -46,7 +46,7 @@ app.use('/api/salaries', require('./routes/salaries'));
 app.use('/api/salary-entities', require('./routes/salaryEntities'));
 app.use('/api/messages', require('./routes/messages'));
 
-// --- WhatsApp client (with QR image endpoint) ---
+// --- WhatsApp client setup ---
 let chromePath = null;
 const possiblePaths = [
     '/opt/render/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome',
@@ -67,20 +67,20 @@ const waClient = new Client({
     }
 });
 
+let latestQR = null;
 waClient.on('qr', async (qr) => {
-    console.log('🔐 QR code generated. Open the following URL in your browser:');
+    latestQR = qr;
     const qrImage = await QRCode.toDataURL(qr);
     app.locals.qrCode = qrImage;
-    // Log the endpoint for convenience (Render will have its own URL)
-    console.log(`👉 Go to /api/qr on your backend URL (e.g., https://your-backend.onrender.com/api/qr) to scan`);
+    console.log('🔐 QR code generated. Go to /api/qr');
 });
 
 waClient.on('ready', () => console.log('✅ WhatsApp client is ready!'));
 waClient.initialize();
 
-// Endpoint to show QR code as image
+// QR endpoint - must be defined BEFORE error handlers
 app.get('/api/qr', (req, res) => {
-    if (!app.locals.qrCode) return res.status(404).send('QR not ready yet. Wait a moment and refresh.');
+    if (!app.locals.qrCode) return res.status(404).send('QR code not ready yet. Wait a few seconds and refresh.');
     res.send(`<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0"><img src="${app.locals.qrCode}" style="width:300px;height:auto;"></body></html>`);
 });
 
@@ -104,8 +104,8 @@ app.post('/api/send-whatsapp-multi', upload.array('files'), async (req, res) => 
     }
 });
 
-// Error handlers
-app.use((req, res) => res.status(404).json({ error: 'Route not found' }));
+// --- Error handlers (placed at the end) ---
+app.use((req, res) => res.status(404).json({ error: 'Route not found', path: req.path }));
 app.use((err, req, res, next) => { console.error(err); res.status(500).json({ error: err.message }); });
 
 const PORT = process.env.PORT || 5000;
