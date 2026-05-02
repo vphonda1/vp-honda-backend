@@ -116,7 +116,6 @@ app.get('/api/qr', (req, res) => {
     `);
 });
 
-startWhatsApp();
 
 // QR Route
 app.get('/api/qr', (req, res) => {
