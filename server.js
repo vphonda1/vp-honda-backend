@@ -66,52 +66,51 @@ app.get('/api/qr', (req, res) => {
     res.send(`<html><body style="background:#000;display:flex;justify-content:center;align-items:center;height:100vh"><img src="${qrImageDataURL}" width="300"></body></html>`);
 });
 
-// ====================== WHATSAPP (Safe Initialize) ======================
-let waClient = null;
+// ====================== WHATSAPP SETUP (Safe) ======================
+let qrImageDataURL = null;
 
 const startWhatsApp = async () => {
     try {
-        const possiblePaths = [
-            '/opt/render/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome',
-            '/opt/render/.cache/puppeteer/chrome/linux-133.0.6943.126/chrome-linux64/chrome'
-        ];
+        console.log("🚀 Starting WhatsApp Client...");
 
-        let chromePath = null;
-        for (const p of possiblePaths) {
-            if (fs.existsSync(p)) {
-                chromePath = p;
-                break;
-            }
-        }
-
-        console.log(chromePath ? `✅ Chrome found: ${chromePath}` : '⚠️ Chrome not found');
-
-        waClient = new Client({
+        const waClient = new Client({
             authStrategy: new LocalAuth(),
             puppeteer: {
                 headless: true,
-                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-                executablePath: chromePath || undefined,
-                timeout: 0
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--single-process',
+                    '--disable-gpu'
+                ],
+                timeout: 60000,
             }
         });
 
         waClient.on('qr', async (qr) => {
             qrImageDataURL = await QRCode.toDataURL(qr, { width: 300 });
-            console.log('✅ QR Code Generated');
+            console.log('✅ QR Code Generated Successfully');
         });
 
         waClient.on('ready', () => console.log('✅ WhatsApp Ready'));
         waClient.on('authenticated', () => console.log('✅ WhatsApp Authenticated'));
+        waClient.on('disconnected', () => console.log('❌ WhatsApp Disconnected'));
 
         await waClient.initialize();
+        console.log("✅ WhatsApp Client Initialized");
+
     } catch (err) {
-        console.error('WhatsApp Init Error:', err.message);
+        console.error('❌ WhatsApp Init Error:', err.message);
     }
 };
 
-// Start WhatsApp in background (non-blocking)
+// Start WhatsApp
 startWhatsApp();
+
 
 // ====================== SEND WHATSAPP ======================
 app.post('/api/send-whatsapp-multi', upload.array('files'), async (req, res) => {
