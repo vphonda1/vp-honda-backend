@@ -62,35 +62,49 @@ app.get('/api/debug-routes', (req, res) => {
 let qrImageDataURL = null;
 let isWhatsAppReady = false;
 
-const waClient = new Client({
-    authStrategy: new LocalAuth({ clientId: "vp-honda" }),
-    puppeteer: {
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process'
-        ],
-        timeout: 0
+const startWhatsApp = async () => {
+    try {
+        console.log("🚀 Initializing WhatsApp...");
+
+        const client = new Client({
+            authStrategy: new LocalAuth({ clientId: "vp-honda" }),
+            puppeteer: {
+                headless: true,
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--no-first-run',
+                    '--no-zygote'
+                ],
+                timeout: 60000
+            }
+        });
+
+        client.on('qr', async (qr) => {
+            qrImageDataURL = await QRCode.toDataURL(qr, { width: 320, margin: 2 });
+            console.log('✅ QR Code Generated - Ready at /api/qr');
+        });
+
+        client.on('ready', () => {
+            isWhatsAppReady = true;
+            console.log('✅ WhatsApp Web Connected Successfully!');
+        });
+
+        client.on('authenticated', () => console.log('✅ WhatsApp Authenticated'));
+        client.on('disconnected', () => console.log('❌ WhatsApp Disconnected'));
+
+        await client.initialize();
+        console.log("✅ WhatsApp Client Started");
+
+    } catch (err) {
+        console.error("❌ WhatsApp Error:", err.message);
     }
-});
+};
 
-waClient.on('qr', async (qr) => {
-    qrImageDataURL = await QRCode.toDataURL(qr, { width: 320 });
-    console.log('✅ QR Code Generated');
-});
-
-waClient.on('ready', () => {
-    isWhatsAppReady = true;
-    console.log('✅ WhatsApp Connected Successfully!');
-});
-
-waClient.on('authenticated', () => console.log('✅ Authenticated'));
-waClient.initialize();
+// Call the function
+startWhatsApp();
 
 // QR Route
 app.get('/api/qr', (req, res) => {
