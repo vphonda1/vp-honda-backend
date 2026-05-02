@@ -1,4 +1,4 @@
-// VP Honda Backend — server.js (with WhatsApp Multi-File Send)
+// VP Honda Backend — server.js (with WhatsApp Multi-File Send using Render's built-in Chrome)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -6,28 +6,6 @@ const path = require('path');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const multer = require('multer');
-const puppeteer = require('puppeteer');
-
-// ─── क्रिटिकल फिक्स: Render पर Chrome का पाथ सेट करें ────────────────────────
-if (process.env.RENDER) {
-    // Render environment me Chrome ka executable path set karo
-    const possiblePaths = [
-        '/opt/render/.cache/puppeteer/chrome/linux-133.0.6943.126/chrome-linux64/chrome',
-        '/opt/render/.cache/puppeteer/chrome/linux-122.0.6261.128/chrome-linux64/chrome',
-        '/opt/render/.cache/puppeteer/chrome/linux-121.0.6167.85/chrome-linux64/chrome'
-    ];
-    for (const chromePath of possiblePaths) {
-        const fs = require('fs');
-        if (fs.existsSync(chromePath)) {
-            process.env.PUPPETEER_EXECUTABLE_PATH = chromePath;
-            console.log(`✅ Chrome found at: ${chromePath}`);
-            break;
-        }
-    }
-    if (!process.env.PUPPETEER_EXECUTABLE_PATH) {
-        console.warn('⚠️ Chrome executable not found in cache, will rely on Puppeteer default');
-    }
-}
 
 require('dotenv').config();
 
@@ -71,13 +49,31 @@ app.use('/api/salaries', require('./routes/salaries'));
 app.use('/api/salary-entities', require('./routes/salaryEntities'));
 app.use('/api/messages', require('./routes/messages'));
 
-// ─── WhatsApp Web JS (Multi-File Send) ────────────────────────────────────────
+// ─── WhatsApp Web JS (using Render's built-in Chrome) ────────────────────────
+// Render पर Chrome का पाथ ढूंढो
+let chromePath = null;
+const possiblePaths = [
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/opt/render/project/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome'
+];
+for (const p of possiblePaths) {
+    const fs = require('fs');
+    if (fs.existsSync(p)) {
+        chromePath = p;
+        console.log(`✅ Chrome found at: ${chromePath}`);
+        break;
+    }
+}
+if (!chromePath) console.warn('⚠️ Chrome not found, WhatsApp client may fail');
+
 const waClient = new Client({
     authStrategy: new LocalAuth(),
-    puppeteer: { 
-        headless: true, 
+    puppeteer: {
+        headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+        executablePath: chromePath || undefined
     }
 });
 
