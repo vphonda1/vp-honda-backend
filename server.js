@@ -1,10 +1,9 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const multer = require('multer');
-const fs = require('fs');
 const QRCode = require('qrcode');
+const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 
 require('dotenv').config();
 
@@ -23,9 +22,9 @@ if (mongoUri) {
 }
 
 // Root Route
-app.get('/', (req, res) => res.json({ status: 'ok' }));
+app.get('/', (req, res) => res.json({ status: 'ok', message: 'VP Honda Backend Running' }));
 
-// ====================== YOUR EXISTING ROUTES ======================
+// ====================== YOUR EXISTING ROUTES (Unchanged) ======================
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/parts', require('./routes/parts'));
 app.use('/api/invoices', require('./routes/invoices'));
@@ -45,114 +44,74 @@ app.use('/api/salaries', require('./routes/salaries'));
 app.use('/api/salary-entities', require('./routes/salaryEntities'));
 app.use('/api/messages', require('./routes/messages'));
 
-// ====================== DEBUG ROUTES ======================
-app.get('/api/debug-routes', (req, res) => {
-    res.json({
-        message: "All Routes Working",
-        routes: [
-            { method: "GET", path: "/" },
-            { method: "GET", path: "/api/qr" },
-            { method: "GET", path: "/api/debug-routes" },
-            { method: "POST", path: "/api/send-whatsapp-multi" }
-        ]
+// ====================== BAILEYS WHATSAPP ======================
+let qrCodeDataURL = null;
+let isConnected = false;
+let sock = null;
+
+const startWhatsApp = async () => {
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+
+    sock = makeWASocket({
+        auth: state,
+        printQRInTerminal: false,
+        logger: require('pino')({ level: 'silent' })
     });
-});
 
-// ====================== WHATSAPP AUTOMATION (Only this part changed) ======================
-let qrImageDataURL = null;
-let isWhatsAppReady = false;
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
 
-console.log("🚀 WhatsApp Client Initializing...");
+        if (qr) {
+            qrCodeDataURL = await QRCode.toDataURL(qr, { width: 320 });
+            console.log('✅ QR Code Generated - Ready at /api/qr');
+        }
 
-const waClient = new Client({
-    authStrategy: new LocalAuth({ clientId: "vp-honda" }),
-    puppeteer: {
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--no-first-run'
-        ],
-        timeout: 0
-    }
-});
+        if (connection === 'open') {
+            isConnected = true;
+            console.log('🎉 WhatsApp Connected Successfully!');
+        }
 
-waClient.on('qr', async (qr) => {
-    console.log("🔥 QR EVENT RECEIVED!");
-    qrImageDataURL = await QRCode.toDataURL(qr, { width: 320 });
-    console.log("✅ QR Code Generated Successfully at /api/qr");
-});
+        if (connection === 'close') {
+            console.log('Connection closed, reconnecting...');
+            setTimeout(startWhatsApp, 5000);
+        }
+    });
 
-waClient.on('ready', () => {
-    isWhatsAppReady = true;
-    console.log("🎉 WhatsApp Web Connected Successfully!");
-});
+    sock.ev.on('creds.update', saveCreds);
+};
 
-waClient.on('authenticated', () => console.log("✅ WhatsApp Authenticated"));
-waClient.on('disconnected', () => console.log("❌ WhatsApp Disconnected"));
-
-waClient.initialize()
-    .then(() => console.log("✅ WhatsApp Initialize Command Sent"))
-    .catch(err => console.error("❌ Initialize Error:", err.message));
-
-// QR Route (Existing route को replace कर दें)
-app.get('/api/qr', (req, res) => {
-    if (!qrImageDataURL) {
-        return res.status(404).json({ 
-            error: 'QR not ready', 
-            message: 'Wait 20-30 seconds and refresh this page' 
-        });
-    }
-    res.send(`
-        <html>
-        <body style="background:#111;color:white;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;flex-direction:column;font-family:Arial">
-            <h2>Scan WhatsApp QR Code</h2>
-            <img src="${qrImageDataURL}" style="border-radius:12px;box-shadow:0 0 20px #0f0;" width="300">
-            ${isWhatsAppReady ? '<h3 style="color:lime">✅ Connected</h3>' : ''}
-        </body>
-        </html>
-    `);
-});
-
+startWhatsApp();
 
 // QR Route
 app.get('/api/qr', (req, res) => {
-    if (!qrImageDataURL) {
+    if (!qrCodeDataURL) {
         return res.status(404).json({ error: 'QR not ready', message: 'Wait 15-20 seconds and refresh' });
     }
     res.send(`
-        <html>
-        <head><title>WhatsApp QR</title></head>
-        <body style="background:#111;color:white;display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;margin:0;font-family:Arial">
+        <html><body style="background:#111;color:white;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;flex-direction:column;">
             <h2>Scan WhatsApp QR</h2>
-            <img src="${qrImageDataURL}" style="border-radius:15px;box-shadow:0 0 25px #0f0;">
-            ${isWhatsAppReady ? '<h3 style="color:lime">✅ Connected</h3>' : '<p>Scan करने के बाद Refresh करें</p>'}
-        </body>
-        </html>
+            <img src="${qrCodeDataURL}" width="300" style="border-radius:12px;">
+            ${isConnected ? '<h3 style="color:lime">✅ Connected</h3>' : ''}
+        </body></html>
     `);
 });
 
-// Send WhatsApp
+// Send WhatsApp Route
 app.post('/api/send-whatsapp-multi', upload.array('files'), async (req, res) => {
     const { phoneNumber, caption } = req.body;
-    if (!phoneNumber) return res.status(400).json({ error: 'Phone number required' });
+    if (!phoneNumber || !sock) return res.status(400).json({ error: 'Phone number or WhatsApp not ready' });
 
     try {
-        const chatId = phoneNumber.includes('@c.us') ? phoneNumber : `${phoneNumber}@c.us`;
-        if (caption) await waClient.sendMessage(chatId, caption);
-        res.json({ success: true });
+        const jid = `${phoneNumber.replace('+', '')}@s.whatsapp.net`;
+        await sock.sendMessage(jid, { text: caption || 'Message from VP Honda' });
+        res.json({ success: true, message: 'Message sent successfully' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// 404
+// 404 Handler
 app.use((req, res) => res.status(404).json({ error: 'Route not found', path: req.path }));
 
-// Start Server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
