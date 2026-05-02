@@ -23,7 +23,7 @@ mongoose.connect(mongoUri)
 
 app.get('/', (req, res) => res.json({ status: 'ok' }));
 
-// ----- सभी पुराने रूट्स (बिलकुल सुरक्षित) -----
+// ----- सभी पुराने रूट्स (बिल्कुल सुरक्षित) -----
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/parts', require('./routes/parts'));
 app.use('/api/invoices', require('./routes/invoices'));
@@ -43,41 +43,51 @@ app.use('/api/salaries', require('./routes/salaries'));
 app.use('/api/salary-entities', require('./routes/salaryEntities'));
 app.use('/api/messages', require('./routes/messages'));
 
-// ----- WhatsApp Client -----
+// ----- WhatsApp Client Setup -----
 let chromePath = null;
-const possible = ['/opt/render/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome'];
-for (const p of possible) if (fs.existsSync(p)) { chromePath = p; break; }
-console.log(chromePath ? `✅ Chrome at ${chromePath}` : '⚠️ Chrome not found');
+const possiblePaths = [
+    '/opt/render/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome',
+    '/opt/render/.cache/puppeteer/chrome/linux-133.0.6943.126/chrome-linux64/chrome'
+];
+for (const p of possiblePaths) {
+    if (fs.existsSync(p)) { chromePath = p; break; }
+}
+if (!chromePath) console.warn('⚠️ Chrome not found');
+else console.log(`✅ Chrome found at: ${chromePath}`);
 
 const waClient = new Client({
     authStrategy: new LocalAuth(),
-    puppeteer: { headless: true, args: ['--no-sandbox'], executablePath: chromePath || undefined }
+    puppeteer: {
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        executablePath: chromePath || undefined
+    }
 });
 
-let qrImageData = null;
+let qrImageDataURL = null;
 waClient.on('qr', async (qr) => {
-    qrImageData = await QRCode.toDataURL(qr);
-    console.log('✅ QR image ready at /api/qr');
+    qrImageDataURL = await QRCode.toDataURL(qr, { width: 250 });
+    console.log('✅ QR code generated. Visit /api/qr');
 });
-waClient.on('ready', () => console.log('✅ WhatsApp ready'));
+waClient.on('ready', () => console.log('✅ WhatsApp client is ready!'));
 waClient.initialize();
 
 // ----- QR इमेज endpoint (मोबाइल से स्कैन करने लायक) -----
 app.get('/api/qr', (req, res) => {
-    if (!qrImageData) return res.status(404).send('QR not yet generated, wait 10 seconds and refresh.');
+    if (!qrImageDataURL) {
+        return res.status(404).send('QR not ready yet. Please wait 10 seconds and refresh.');
+    }
     res.send(`
-        <!DOCTYPE html>
         <html>
-        <head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
-        <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0">
-            <img src="${qrImageData}" style="width:250px; height:auto;">
-            <p style="position:absolute; bottom:20px; font-family:sans-serif;">Scan with WhatsApp</p>
-        </body>
+            <head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+            <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#111;">
+                <img src="${qrImageDataURL}" style="width:250px;height:auto;border-radius:12px;box-shadow:0 0 20px #00a884;">
+            </body>
         </html>
     `);
 });
 
-// ----- WhatsApp सेंड करने का endpoint -----
+// ----- WhatsApp send endpoint (multi‑file) -----
 app.post('/api/send-whatsapp-multi', upload.array('files'), async (req, res) => {
     const { phoneNumber, caption } = req.body;
     if (!phoneNumber) return res.status(400).json({ error: 'Phone number missing' });
@@ -95,7 +105,7 @@ app.post('/api/send-whatsapp-multi', upload.array('files'), async (req, res) => 
     }
 });
 
-// ----- 404 handler (सबसे नीचे होना चाहिए) -----
+// ----- 404 handler – सबसे नीचे रखना जरूरी -----
 app.use((req, res) => res.status(404).json({ error: 'Route not found', path: req.path }));
 
 const PORT = process.env.PORT || 5000;
