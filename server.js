@@ -6,6 +6,28 @@ const path = require('path');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const multer = require('multer');
+const puppeteer = require('puppeteer');
+
+// ─── क्रिटिकल फिक्स: Render पर Chrome का पाथ सेट करें ────────────────────────
+if (process.env.RENDER) {
+    // Render environment me Chrome ka executable path set karo
+    const possiblePaths = [
+        '/opt/render/.cache/puppeteer/chrome/linux-133.0.6943.126/chrome-linux64/chrome',
+        '/opt/render/.cache/puppeteer/chrome/linux-122.0.6261.128/chrome-linux64/chrome',
+        '/opt/render/.cache/puppeteer/chrome/linux-121.0.6167.85/chrome-linux64/chrome'
+    ];
+    for (const chromePath of possiblePaths) {
+        const fs = require('fs');
+        if (fs.existsSync(chromePath)) {
+            process.env.PUPPETEER_EXECUTABLE_PATH = chromePath;
+            console.log(`✅ Chrome found at: ${chromePath}`);
+            break;
+        }
+    }
+    if (!process.env.PUPPETEER_EXECUTABLE_PATH) {
+        console.warn('⚠️ Chrome executable not found in cache, will rely on Puppeteer default');
+    }
+}
 
 require('dotenv').config();
 
@@ -52,7 +74,11 @@ app.use('/api/messages', require('./routes/messages'));
 // ─── WhatsApp Web JS (Multi-File Send) ────────────────────────────────────────
 const waClient = new Client({
     authStrategy: new LocalAuth(),
-    puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
+    puppeteer: { 
+        headless: true, 
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+    }
 });
 
 waClient.on('qr', (qr) => {
