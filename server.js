@@ -58,43 +58,63 @@ app.get('/api/debug-routes', (req, res) => {
     });
 });
 
-// ====================== WHATSAPP (No Hardcoded Path) ======================
+// ====================== WHATSAPP AUTOMATION (Only this part changed) ======================
 let qrImageDataURL = null;
 let isWhatsAppReady = false;
 
-const startWhatsApp = async () => {
-    try {
-        console.log("🚀 Starting WhatsApp...");
+console.log("🚀 WhatsApp Client Initializing...");
 
-        const client = new Client({
-            authStrategy: new LocalAuth({ clientId: "vp-honda" }),
-            puppeteer: {
-                headless: true,
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu'
-                ]
-            }
-        });
-
-        client.on('qr', async (qr) => {
-            qrImageDataURL = await QRCode.toDataURL(qr, { width: 320 });
-            console.log('✅ QR GENERATED SUCCESSFULLY');
-        });
-
-        client.on('ready', () => {
-            isWhatsAppReady = true;
-            console.log('🎉 WHATSAPP CONNECTED!');
-        });
-
-        await client.initialize();
-
-    } catch (err) {
-        console.error("WhatsApp Error:", err.message);
+const waClient = new Client({
+    authStrategy: new LocalAuth({ clientId: "vp-honda" }),
+    puppeteer: {
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--no-first-run'
+        ],
+        timeout: 0
     }
-};
+});
+
+waClient.on('qr', async (qr) => {
+    console.log("🔥 QR EVENT RECEIVED!");
+    qrImageDataURL = await QRCode.toDataURL(qr, { width: 320 });
+    console.log("✅ QR Code Generated Successfully at /api/qr");
+});
+
+waClient.on('ready', () => {
+    isWhatsAppReady = true;
+    console.log("🎉 WhatsApp Web Connected Successfully!");
+});
+
+waClient.on('authenticated', () => console.log("✅ WhatsApp Authenticated"));
+waClient.on('disconnected', () => console.log("❌ WhatsApp Disconnected"));
+
+waClient.initialize()
+    .then(() => console.log("✅ WhatsApp Initialize Command Sent"))
+    .catch(err => console.error("❌ Initialize Error:", err.message));
+
+// QR Route (Existing route को replace कर दें)
+app.get('/api/qr', (req, res) => {
+    if (!qrImageDataURL) {
+        return res.status(404).json({ 
+            error: 'QR not ready', 
+            message: 'Wait 20-30 seconds and refresh this page' 
+        });
+    }
+    res.send(`
+        <html>
+        <body style="background:#111;color:white;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;flex-direction:column;font-family:Arial">
+            <h2>Scan WhatsApp QR Code</h2>
+            <img src="${qrImageDataURL}" style="border-radius:12px;box-shadow:0 0 20px #0f0;" width="300">
+            ${isWhatsAppReady ? '<h3 style="color:lime">✅ Connected</h3>' : ''}
+        </body>
+        </html>
+    `);
+});
 
 startWhatsApp();
 
