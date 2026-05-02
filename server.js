@@ -1,4 +1,4 @@
-// VP Honda Backend — server.js (with WhatsApp Multi-File Send using Render's built-in Chrome)
+// VP Honda Backend — server.js (with WhatsApp Multi-File Send)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -6,6 +6,7 @@ const path = require('path');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const multer = require('multer');
+const fs = require('fs');
 
 require('dotenv').config();
 
@@ -49,41 +50,33 @@ app.use('/api/salaries', require('./routes/salaries'));
 app.use('/api/salary-entities', require('./routes/salaryEntities'));
 app.use('/api/messages', require('./routes/messages'));
 
-// ─── WhatsApp Web JS (using Render's built-in Chrome) ────────────────────────
-// Render पर Chrome का पाथ ढूंढो
+// ─── WhatsApp Web JS (Multi-File Send) using system Chrome ────────────────────
+// Find Chrome executable path (Render cache)
 let chromePath = null;
 const possiblePaths = [
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/chromium',
-    '/opt/render/project/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome'
+    '/opt/render/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome',
+    '/opt/render/.cache/puppeteer/chrome/linux-133.0.6943.126/chrome-linux64/chrome',
+    '/opt/render/project/src/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome'
 ];
 for (const p of possiblePaths) {
-    const fs = require('fs');
-    if (fs.existsSync(p)) {
+    if (p.includes('*')) {
+        const glob = require('glob');
+        const matches = glob.sync(p);
+        if (matches.length > 0) { chromePath = matches[0]; break; }
+    } else if (fs.existsSync(p)) {
         chromePath = p;
-        console.log(`✅ Chrome found at: ${chromePath}`);
         break;
     }
 }
 if (!chromePath) console.warn('⚠️ Chrome not found, WhatsApp client may fail');
-
-// --- Render पर Chrome का सही पाथ ढूँढें ---
-const fs = require('fs');
-let chromePath = '/opt/render/.cache/puppeteer/chrome/linux-133.0.6943.126/chrome-linux64/chrome';
-if (!fs.existsSync(chromePath)) {
-    console.warn('⚠️ Chrome not found at expected path, trying default');
-    chromePath = undefined;
-}
-
-// फिर waClient बनाएँ (नीचे पहले से लिखा है, बस executablePath जोड़ें)
+else console.log(`✅ Chrome found at: ${chromePath}`);
 
 const waClient = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
-        args: ['--no-sandbox'],
-        executablePath: chromePath   // यह लाइन जोड़ें
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        executablePath: chromePath || undefined
     }
 });
 
@@ -118,4 +111,4 @@ app.use((req, res) => res.status(404).json({ error: 'Route not found', path: req
 app.use((err, req, res, next) => { console.error(err); res.status(500).json({ error: err.message }); });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`VP Honda API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ VP Honda API running on port ${PORT}`));
