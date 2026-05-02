@@ -4,7 +4,7 @@ const cors = require('cors');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const multer = require('multer');
 const fs = require('fs');
-const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 
 require('dotenv').config();
 
@@ -23,7 +23,7 @@ mongoose.connect(mongoUri)
 
 app.get('/', (req, res) => res.json({ status: 'ok' }));
 
-// ------ YOUR EXISTING ROUTES (unchanged) ------
+// ----- सभी पुराने रूट्स (बिलकुल सुरक्षित) -----
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/parts', require('./routes/parts'));
 app.use('/api/invoices', require('./routes/invoices'));
@@ -43,38 +43,41 @@ app.use('/api/salaries', require('./routes/salaries'));
 app.use('/api/salary-entities', require('./routes/salaryEntities'));
 app.use('/api/messages', require('./routes/messages'));
 
-// ------ WhatsApp Client (with QR printed in logs) ------
+// ----- WhatsApp Client -----
 let chromePath = null;
-const possiblePaths = [
-    '/opt/render/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome',
-    '/opt/render/.cache/puppeteer/chrome/linux-133.0.6943.126/chrome-linux64/chrome'
-];
-for (const p of possiblePaths) {
-    if (fs.existsSync(p)) { chromePath = p; break; }
-}
-if (!chromePath) console.warn('⚠️ Chrome not found, WhatsApp may fail');
-else console.log(`✅ Chrome found at: ${chromePath}`);
+const possible = ['/opt/render/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome'];
+for (const p of possible) if (fs.existsSync(p)) { chromePath = p; break; }
+console.log(chromePath ? `✅ Chrome at ${chromePath}` : '⚠️ Chrome not found');
 
 const waClient = new Client({
     authStrategy: new LocalAuth(),
-    puppeteer: {
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-        executablePath: chromePath || undefined
-    }
+    puppeteer: { headless: true, args: ['--no-sandbox'], executablePath: chromePath || undefined }
 });
 
-// ----- यही वह जादू है – QR कोड सीधे logs में छपेगा -----
-waClient.on('qr', (qr) => {
-    console.log('\n🔐 ========== SCAN THIS QR CODE WITH WHATSAPP ==========\n');
-    qrcode.generate(qr, { small: false });  // false = बड़ा, साफ QR
-    console.log('\n=====================================================\n');
+let qrImageData = null;
+waClient.on('qr', async (qr) => {
+    qrImageData = await QRCode.toDataURL(qr);
+    console.log('✅ QR image ready at /api/qr');
 });
-
-waClient.on('ready', () => console.log('✅ WhatsApp client is ready!'));
+waClient.on('ready', () => console.log('✅ WhatsApp ready'));
 waClient.initialize();
 
-// WhatsApp send endpoint (same as before)
+// ----- QR इमेज endpoint (मोबाइल से स्कैन करने लायक) -----
+app.get('/api/qr', (req, res) => {
+    if (!qrImageData) return res.status(404).send('QR not yet generated, wait 10 seconds and refresh.');
+    res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+        <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0">
+            <img src="${qrImageData}" style="width:250px; height:auto;">
+            <p style="position:absolute; bottom:20px; font-family:sans-serif;">Scan with WhatsApp</p>
+        </body>
+        </html>
+    `);
+});
+
+// ----- WhatsApp सेंड करने का endpoint -----
 app.post('/api/send-whatsapp-multi', upload.array('files'), async (req, res) => {
     const { phoneNumber, caption } = req.body;
     if (!phoneNumber) return res.status(400).json({ error: 'Phone number missing' });
@@ -92,7 +95,7 @@ app.post('/api/send-whatsapp-multi', upload.array('files'), async (req, res) => 
     }
 });
 
-// 404 handler (must be at the end)
+// ----- 404 handler (सबसे नीचे होना चाहिए) -----
 app.use((req, res) => res.status(404).json({ error: 'Route not found', path: req.path }));
 
 const PORT = process.env.PORT || 5000;
