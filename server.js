@@ -22,7 +22,7 @@ if (mongoUri) {
 
 app.get('/', (req, res) => res.json({ status: 'ok' }));
 
-// ----- सभी पुराने routes (customers, documents, etc.) बिल्कुल यहाँ रहेंगे – आपको बस अपने routes यहाँ जोड़ने हैं -----
+// ----- सभी routes (ये आपके पास पहले से हैं) -----
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/parts', require('./routes/parts'));
 app.use('/api/invoices', require('./routes/invoices'));
@@ -42,52 +42,55 @@ app.use('/api/salaries', require('./routes/salaries'));
 app.use('/api/salary-entities', require('./routes/salaryEntities'));
 app.use('/api/messages', require('./routes/messages'));
 
-// ----- WhatsApp Client Setup (WhatsApp Web JS) -----
-// Chrome का पाथ ढूंढो (Render के cache में)
-let chromePath = null;
-const possiblePaths = [
-    '/opt/render/.cache/puppeteer/chrome/linux-131.0.6778.204/chrome-linux64/chrome',
-    '/opt/render/.cache/puppeteer/chrome/linux-133.0.6943.126/chrome-linux64/chrome'
-];
-for (const p of possiblePaths) {
-    if (fs.existsSync(p)) {
-        chromePath = p;
-        break;
-    }
-}
-if (!chromePath) console.warn('⚠️ Chrome not found');
-else console.log(`✅ Chrome found at: ${chromePath}`);
+// ----- WhatsApp Client Setup (बिना मैन्युअल Chrome पाथ के) -----
+let qrCodeImage = null;
 
 const waClient = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-        executablePath: chromePath || undefined
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--disable-gpu'
+        ]
     }
 });
 
-let qrCodeImage = null;
 waClient.on('qr', async (qr) => {
-    // QR को Image में बदलो
-    qrCodeImage = await QRCode.toDataURL(qr, { width: 300 });
+    // QR को छोटे base64 इमेज में बदलें
+    qrCodeImage = await QRCode.toDataURL(qr, { width: 300, margin: 2 });
     console.log('✅ QR code generated. Visit /api/qr');
 });
 
 waClient.on('ready', () => {
     console.log('✅ WhatsApp client is ready!');
-    qrCodeImage = null; // QR हटाओ अब जरूरत नहीं
+    qrCodeImage = null;
 });
 
-waClient.initialize();
+waClient.on('auth_failure', (msg) => {
+    console.error('❌ WhatsApp auth failed:', msg);
+});
 
-// ----- QR endpoint – बिल्कुल सरल HTML पेज -----
+waClient.on('disconnected', (reason) => {
+    console.log('⚠️ WhatsApp disconnected:', reason);
+});
+
+// Initialize client with error handling
+waClient.initialize().catch(err => {
+    console.error('❌ Failed to initialize WhatsApp client:', err);
+});
+
+// ----- QR endpoint – सरल HTML पेज -----
 app.get('/api/qr', (req, res) => {
     if (!qrCodeImage) {
         return res.status(404).send(`
             <html><body style="font-family:sans-serif;text-align:center;margin-top:50px;">
             <h2>⏳ QR कोड तैयार नहीं है</h2>
-            <p>कृपया 10 सेकंड रुकें और पेज रिफ्रेश करें।</p>
+            <p>कृपया 10 सेकंड रुकें और पेज रिफ्रेश करें।<br>
+            यदि बार-बार नहीं आ रहा तो <strong>server restarted</strong> हुआ होगा, WhatsApp फिर से स्कैन करें।</p>
             </body></html>
         `);
     }
@@ -107,7 +110,7 @@ app.post('/api/send-whatsapp-multi', upload.array('files'), async (req, res) => 
     if (!phoneNumber) return res.status(400).json({ error: 'Phone number missing' });
     const chatId = phoneNumber.includes('@c.us') ? phoneNumber : `${phoneNumber}@c.us`;
     try {
-        await waClient.sendMessage(chatId, caption);
+        await waClient.sendMessage(chatId, caption || '');
         for (const file of req.files) {
             const media = new MessageMedia(file.mimetype, file.buffer.toString('base64'), file.originalname);
             await waClient.sendMessage(chatId, media);
