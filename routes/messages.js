@@ -3,6 +3,7 @@ const express  = require('express');
 const router   = express.Router();
 const Message  = require('../models/Message');
 const webpush  = require('web-push');
+const { sendToAll } = require('./push');
 
 const VAPID_PUBLIC_KEY  = 'BKwecIw_aOdebFYVONRm-ZF3au68bNWU1uHPSXkwr1LvV7dIS-b-v614SMT6UgjHbcqigskmSAhFBWHxV9a__TM';
 const VAPID_PRIVATE_KEY = 'BphjFle5WwJGYAMWYMIF2bFT1BypFyCmT35JFXsGYYI';
@@ -12,21 +13,7 @@ let PushSubscription;
 try { PushSubscription = require('../models/PushSubscription'); } catch { console.warn('[Messages] PushSubscription model missing'); }
 
 async function sendPushToAll(title, body, url) {
-  if (!PushSubscription) return;
-  try {
-    const subs    = await PushSubscription.find().lean();
-    if (!subs.length) return;
-    const payload = JSON.stringify({ title, body, url: url || '/chat', icon:'/icons/icon-192x192.png', badge:'/icons/icon-96x96.png' });
-    for (const sub of subs) {
-      try {
-        await webpush.sendNotification(sub, payload);
-      } catch (err) {
-        if (err.statusCode === 410 || err.statusCode === 404) {
-          await PushSubscription.deleteOne({ endpoint: sub.endpoint });
-        }
-      }
-    }
-  } catch (e) { console.error('[Push]', e.message); }
+  return sendToAll(title, body, url).catch(console.error);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
