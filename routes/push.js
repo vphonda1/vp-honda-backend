@@ -1,5 +1,5 @@
 const express = require('express');
-const router  = express.Router();
+const router = express.Router();
 const webpush = require('web-push');
 const mongoose = require('mongoose');
 
@@ -8,7 +8,7 @@ const VAPID_PUBLIC_KEY  = 'BKwecIw_aOdebFYVONRm-ZF3au68bNWU1uHPSXkwr1LvV7dIS-b-v
 const VAPID_PRIVATE_KEY = 'BphjFle5WwJGYAMWYMIF2bFT1BypFyCmT35JFXsGYYI';
 webpush.setVapidDetails('mailto:admin@vphonda.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
-// ✅ MongoDB Schema — persistent across all server restarts
+// MongoDB Schema
 const PushSubSchema = new mongoose.Schema({
   endpoint:  { type: String, required: true, unique: true },
   keys:      { p256dh: String, auth: String },
@@ -16,7 +16,7 @@ const PushSubSchema = new mongoose.Schema({
 });
 const PushSub = mongoose.models.PushSubscription || mongoose.model('PushSubscription', PushSubSchema);
 
-// Helper: send push to all saved devices
+// ✅ यही सेंट्रल फ़ंक्शन है – सभी डिवाइस को नोटिफिकेशन भेजने के लिए
 async function sendToAll(title, body, url) {
   const subs = await PushSub.find().lean();
   console.log(`[Push] Sending "${title}" to ${subs.length} devices`);
@@ -37,7 +37,7 @@ async function sendToAll(title, body, url) {
   return { sent, removed };
 }
 
-// Save subscription (called when user clicks Allow)
+// ----- Routes (सब ठीक हैं) -----
 router.post('/save-push-subscription', async (req, res) => {
   try {
     const { endpoint, keys } = req.body;
@@ -56,7 +56,6 @@ router.post('/save-push-subscription', async (req, res) => {
   }
 });
 
-// Remove subscription
 router.delete('/save-push-subscription', async (req, res) => {
   try {
     if (req.body?.endpoint) await PushSub.deleteOne({ endpoint: req.body.endpoint });
@@ -66,7 +65,6 @@ router.delete('/save-push-subscription', async (req, res) => {
   }
 });
 
-// Send push to ALL devices (used by chat, reminders, meeting)
 router.post('/send-push', async (req, res) => {
   try {
     const { title, body, url } = req.body;
@@ -78,7 +76,6 @@ router.post('/send-push', async (req, res) => {
   }
 });
 
-// Test notification
 router.post('/test-push-notification', async (req, res) => {
   try {
     const total = await PushSub.countDocuments();
@@ -90,10 +87,8 @@ router.post('/test-push-notification', async (req, res) => {
   }
 });
 
-// VAPID public key
 router.get('/vapid-public-key', (req, res) => res.json({ publicKey: VAPID_PUBLIC_KEY }));
 
-// Count devices
 router.get('/push-subscriptions', async (req, res) => {
   try {
     const total = await PushSub.countDocuments();
@@ -103,4 +98,6 @@ router.get('/push-subscriptions', async (req, res) => {
   }
 });
 
-module.exports = { router, sendToAll };
+// ✅ सही export – router default के तौर पर, और sendToAll भी उपलब्ध (अगर कहीं और चाहिए)
+module.exports = router;
+module.exports.sendToAll = sendToAll;
