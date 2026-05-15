@@ -3,7 +3,6 @@ const express  = require('express');
 const router   = express.Router();
 const Message  = require('../models/Message');
 const webpush  = require('web-push');
-const { sendToAll } = require('./push');
 
 const VAPID_PUBLIC_KEY  = 'BKwecIw_aOdebFYVONRm-ZF3au68bNWU1uHPSXkwr1LvV7dIS-b-v614SMT6UgjHbcqigskmSAhFBWHxV9a__TM';
 const VAPID_PRIVATE_KEY = 'BphjFle5WwJGYAMWYMIF2bFT1BypFyCmT35JFXsGYYI';
@@ -13,7 +12,21 @@ let PushSubscription;
 try { PushSubscription = require('../models/PushSubscription'); } catch { console.warn('[Messages] PushSubscription model missing'); }
 
 async function sendPushToAll(title, body, url) {
-  return sendToAll(title, body, url).catch(console.error);
+  if (!PushSubscription) return;
+  try {
+    const subs    = await PushSubscription.find().lean();
+    if (!subs.length) return;
+    const payload = JSON.stringify({ title, body, url: url || '/chat', icon:'/icons/icon-192x192.png', badge:'/icons/icon-96x96.png' });
+    for (const sub of subs) {
+      try {
+        await webpush.sendNotification(sub, payload);
+      } catch (err) {
+        if (err.statusCode === 410 || err.statusCode === 404) {
+          await PushSubscription.deleteOne({ endpoint: sub.endpoint });
+        }
+      }
+    }
+  } catch (e) { console.error('[Push]', e.message); }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -47,16 +60,6 @@ router.delete('/save-subscription', async (req, res) => {
 
 // GET /api/messages/vapid-public-key
 router.get('/vapid-public-key', (req, res) => res.json({ publicKey: VAPID_PUBLIC_KEY }));
-
-// POST /api/messages/send-push — Send push to ALL subscribers (for meeting invites)
-router.post('/send-push', async (req, res) => {
-  try {
-    const { title, body, url } = req.body;
-    if (!title) return res.status(400).json({ error: 'title required' });
-    await sendPushToAll(title, body || '', url || '/meeting');
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
 
 // ══════════════════════════════════════════════════════════════════════════════
 // WILDCARD routes — after specific routes
