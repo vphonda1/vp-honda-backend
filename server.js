@@ -4,6 +4,7 @@ const mongoose  = require('mongoose');
 const cors      = require('cors');
 const path      = require('path');
 const webpush   = require('web-push');
+const paymentTracker = require('paymentTracker');
 require('dotenv').config();
 
 const app = express();
@@ -279,6 +280,7 @@ app.use('/api/attendance',       require('./routes/attendance'));
 app.use('/api/salaries',         require('./routes/salaries'));
 app.use('/api/salary-entities',  require('./routes/salaryEntities'));
 app.use('/api/messages',         require('./routes/messages'));
+app.use('/api/payment-tracker',  require('./routes/paymentTracker'));
 
 // documents route (if file exists)
 try { app.use('/api/documents', require('./routes/documents')); } catch(e) { console.warn('documents route not found'); }
