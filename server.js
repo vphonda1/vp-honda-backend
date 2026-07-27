@@ -6,6 +6,7 @@ const path      = require('path');
 const webpush   = require('web-push');
 const paymentTracker  = require('./routes/paymentTracker');
 const paymentReceipts = require('./routes/paymentReceipts');
+const staffModules = require('./routes/staffModules');
 require('dotenv').config();
 
 const app = express();
@@ -283,6 +284,7 @@ app.use('/api/salary-entities',  require('./routes/salaryEntities'));
 app.use('/api/messages',         require('./routes/messages'));
 app.use('/api/payment-tracker',  paymentTracker);
 app.use('/api/payment-receipts', paymentReceipts);
+app.use('/api/staff-modules', staffModules);
 
 // documents route (if file exists)
 try { app.use('/api/documents', require('./routes/documents')); } catch(e) { console.warn('documents route not found'); }
