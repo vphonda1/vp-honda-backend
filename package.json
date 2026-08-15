@@ -20,6 +20,7 @@
     "pdf-parse": "^2.4.5",
     "pdf-poppler": "^0.2.3",
     "pdf-to-img": "^6.0.0",
+    "pdf-lib": "^1.17.1",
     "pdf2json": "^4.0.3",
     "pdf2pic": "^3.2.0",
     "pdfjs-dist": "^3.11.174",
