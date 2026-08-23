@@ -20,13 +20,11 @@ const shopSettingsSchema = new mongoose.Schema({
   latePenalty:    { type: Number, default: 50 },             // per late day
   absentPenaltyDays:{ type: Number, default: 1 },            // days deducted per absent
 
-  // ⭐ Grace period: rules apply only from this date onwards
-  // Default empty = no rules active (all months grace)
-  // Format: YYYY-MM-DD (use first day of month e.g. "2026-05-01")
-  attendanceRulesStartDate: { type: String, default: '' },
-
   // ⭐ Attendance rules activation date — grace period for old months
-  attendanceRulesStartDate: { type: String, default: null }, // YYYY-MM-DD — rules lagu from this month onwards
+  // ⚠️ FIX: यह field दो बार declare थी (एक default:'' और एक default:null).
+  // Mongoose सिर्फ आखिरी वाली लेता था — अब सिर्फ एक ही है.
+  // Format: YYYY-MM-DD (महीने का पहला दिन, जैसे "2026-05-01"). खाली = कोई rule नहीं.
+  attendanceRulesStartDate: { type: String, default: '' }
 }, { timestamps: true });
 
 module.exports = mongoose.models.ShopSettings || mongoose.model('ShopSettings', shopSettingsSchema);
