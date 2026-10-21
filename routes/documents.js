@@ -1,9 +1,11 @@
 // routes/documents.js — VP Honda Document Vault API
+// 🆕 sent-log routes जोड़े (भेजा गया रिकॉर्ड, सभी devices पर)
 // 🆕 VERSION-2026-08-17: PUT route जोड़ा (compressed PDF से replace करने के लिए)
 //    + पुरानी बड़ी file Cloudinary से अपने-आप delete (storage नहीं भरेगा)
 const express  = require('express');
 const router   = express.Router();
 const VpDoc    = require('../models/VpDocument');
+const SentLog  = require('../models/VpDocSentLog');
 
 // ── Cloudinary (वैकल्पिक) ─────────────────────────────────────────────────────
 // अगर cloudinary package install है और env में keys हैं, तभी पुरानी file delete होगी।
@@ -62,6 +64,37 @@ router.get('/', async (req, res) => {
       .lean();
     res.json(docs);
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── 🆕 "भेजा गया" रिकॉर्ड (Insurance / RTO / SU Tax) ───────────────────────────
+// ⚠️ ये routes '/:id' से ऊपर रहने चाहिए, वरना 'sent-log' को id समझ लिया जाएगा।
+// GET  /api/documents/sent-log  → { "<fKey>|<kind>": { count, last, files }, ... }
+router.get('/sent-log', async (req, res) => {
+  try {
+    const rows = await SentLog.find({}).lean();
+    const out = {};
+    for (const r of rows) out[`${r.fKey}|${r.kind}`] = { count: r.count || 0, last: r.last, files: r.files || 0 };
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/documents/sent-log  body: { fKey, kind, inc?: 0|1, files?, count? }
+//   inc   → गिनती इतनी बढ़ाओ (डिफ़ॉल्ट 1)
+//   count → (पुराना local रिकॉर्ड sync करने के लिए) गिनती कम से कम इतनी कर दो
+router.post('/sent-log', async (req, res) => {
+  try {
+    const { fKey, kind, inc, files, count, last } = req.body || {};
+    if (!fKey || !['ins', 'rto', 'su'].includes(kind)) return res.status(400).json({ error: 'fKey / kind गलत है' });
+    const upd = { $set: {}, $setOnInsert: {} };
+    if (typeof files === 'number') upd.$set.files = files;
+    const when = last ? new Date(last) : new Date();
+    upd.$set.last = isNaN(when.getTime()) ? new Date() : when;
+    if (typeof count === 'number') upd.$max = { count: Math.max(0, Math.floor(count)) };
+    else upd.$inc = { count: inc === 0 ? 0 : 1 };
+    if (!Object.keys(upd.$setOnInsert).length) delete upd.$setOnInsert;
+    const row = await SentLog.findOneAndUpdate({ fKey, kind }, upd, { new: true, upsert: true }).lean();
+    res.json({ count: row.count || 0, last: row.last, files: row.files || 0 });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── GET single (fileData के साथ) ─────────────────────────────────────────────
