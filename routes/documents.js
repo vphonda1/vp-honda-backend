@@ -73,27 +73,34 @@ router.get('/sent-log', async (req, res) => {
   try {
     const rows = await SentLog.find({}).lean();
     const out = {};
-    for (const r of rows) out[`${r.fKey}|${r.kind}`] = { count: r.count || 0, last: r.last, files: r.files || 0 };
+    for (const r of rows) out[`${r.fKey}|${r.kind}`] = { count: r.count || 0, last: r.last, files: r.files || 0, history: r.history || [] };
     res.json(out);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// POST /api/documents/sent-log  body: { fKey, kind, inc?: 0|1, files?, count? }
-//   inc   → गिनती इतनी बढ़ाओ (डिफ़ॉल्ट 1)
-//   count → (पुराना local रिकॉर्ड sync करने के लिए) गिनती कम से कम इतनी कर दो
+// POST /api/documents/sent-log  body: { fKey, kind: 'ins'|'rto'|'su'|'disk', inc?: 0|1, files?, count?, history? }
+//   inc     → गिनती इतनी बढ़ाओ (डिफ़ॉल्ट 1) और इस पल की तारीख़-समय history में जोड़ो
+//   count   → (पुराना local रिकॉर्ड sync करने के लिए) गिनती कम से कम इतनी कर दो
+//   history → (उसी sync के साथ) पुरानी तारीख़ें, जो पहले से न हों वही जुड़ेंगी
 router.post('/sent-log', async (req, res) => {
   try {
-    const { fKey, kind, inc, files, count, last } = req.body || {};
-    if (!fKey || !['ins', 'rto', 'su'].includes(kind)) return res.status(400).json({ error: 'fKey / kind गलत है' });
+    const { fKey, kind, inc, files, count, last, history } = req.body || {};
+    if (!fKey || !['ins', 'rto', 'su', 'disk'].includes(kind)) return res.status(400).json({ error: 'fKey / kind गलत है' });
     const upd = { $set: {}, $setOnInsert: {} };
     if (typeof files === 'number') upd.$set.files = files;
     const when = last ? new Date(last) : new Date();
     upd.$set.last = isNaN(when.getTime()) ? new Date() : when;
-    if (typeof count === 'number') upd.$max = { count: Math.max(0, Math.floor(count)) };
-    else upd.$inc = { count: inc === 0 ? 0 : 1 };
+    if (typeof count === 'number') {
+      upd.$max = { count: Math.max(0, Math.floor(count)) };
+      const old = (Array.isArray(history) ? history : []).map(h => new Date(h)).filter(d => !isNaN(d.getTime())).slice(-50);
+      if (old.length) upd.$addToSet = { history: { $each: old } };
+    } else {
+      upd.$inc = { count: inc === 0 ? 0 : 1 };
+      if (inc !== 0) upd.$push = { history: { $each: [upd.$set.last], $slice: -50 } };
+    }
     if (!Object.keys(upd.$setOnInsert).length) delete upd.$setOnInsert;
     const row = await SentLog.findOneAndUpdate({ fKey, kind }, upd, { new: true, upsert: true }).lean();
-    res.json({ count: row.count || 0, last: row.last, files: row.files || 0 });
+    res.json({ count: row.count || 0, last: row.last, files: row.files || 0, history: row.history || [] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
